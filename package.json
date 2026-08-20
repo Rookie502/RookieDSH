@@ -1,7 +1,7 @@
 {
   "name": "rookiedsh",
   "version": "0.1.0",
-  "description": "RookieDSH - DeepSeek Harness desktop workspace manager",
+  "description": "RookieDSH - Desktop Runtime Host for DeepSeek Harness",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
     "typecheck": "tsc --noEmit",

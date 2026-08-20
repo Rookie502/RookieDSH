@@ -1,23 +1,23 @@
 import { app, BrowserView, BrowserWindow, ipcMain, Menu, screen } from 'electron';
 import path from 'node:path';
+import type { RookieDshConfig } from '@shared/configTypes';
 import type { FloatingPosition, ShellPage } from '@shared/types';
+import { getConfig } from './config/configManager';
 import {
   cleanupDshSync,
-  getDshLogs,
-  getDshState,
+  getRuntimeLogs,
+  getRuntimeStatus,
   onDshStatusChanged,
-  startDsh,
-  stopDsh,
-} from './runtime/dshProcess';
+  startRuntime,
+  stopRuntime,
+} from './runtime/RuntimeManager';
 
 const isDev = !app.isPackaged;
-const HARNESS_URL = 'http://localhost:3080';
 const DEV_SERVER_URL = process.env.ROOKIE_DSH_DEV_SERVER_URL ?? 'http://localhost:5173';
 const STARTUP_STARTED_AT = Number(process.env.ROOKIE_DSH_DEV_STARTED_AT) || Date.now();
 const FLOATING_EDGE_GAP = 16;
 const FLOATING_BUTTON_SIZE = 56;
 const FLOATING_VIEW_SIZE = FLOATING_BUTTON_SIZE;
-const FLOATING_PANEL_WIDTH = 280;
 
 let mainWindow: BrowserWindow | null = null;
 let harnessView: BrowserView | null = null;
@@ -42,7 +42,7 @@ function updateHarnessBounds(): void {
   if (!mainWindow || mainWindow.isDestroyed() || !harnessView || harnessView.webContents.isDestroyed()) return;
 
   const { width, height } = mainWindow.getContentBounds();
-  const settingsWidth = floatingPanelOpen ? FLOATING_PANEL_WIDTH : 0;
+  const settingsWidth = floatingPanelOpen ? getConfig().floating.panelWidth : 0;
   harnessView.setBounds({
     x: 0,
     y: 0,
@@ -56,10 +56,11 @@ function updateFloatingBounds(): void {
 
   const { width, height } = mainWindow.getContentBounds();
   if (floatingPanelOpen) {
+    const panelWidth = getConfig().floating.panelWidth;
     floatingView.setBounds({
-      x: Math.max(0, width - FLOATING_PANEL_WIDTH),
+      x: Math.max(0, width - panelWidth),
       y: 0,
-      width: Math.min(FLOATING_PANEL_WIDTH, width),
+      width: Math.min(panelWidth, width),
       height,
     });
     return;
@@ -97,7 +98,7 @@ function showHarnessView(): void {
   if (!mainWindow || mainWindow.isDestroyed() || !harnessView || harnessView.webContents.isDestroyed()) return;
   if (harnessNeedsReload) {
     harnessNeedsReload = false;
-    void harnessView.webContents.loadURL(HARNESS_URL).catch((error: unknown) => {
+    void harnessView.webContents.loadURL(getConfig().harness.url).catch((error: unknown) => {
       harnessNeedsReload = true;
       console.error('Harness UI load failed:', error);
     });
@@ -203,7 +204,7 @@ function createHarnessView(): BrowserView {
 
   view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   view.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(HARNESS_URL)) event.preventDefault();
+    if (!url.startsWith(getConfig().harness.url)) event.preventDefault();
   });
   view.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     harnessNeedsReload = true;
@@ -239,10 +240,10 @@ function createFloatingView(win: BrowserWindow): BrowserView {
   return view;
 }
 
-function createMainWindow(): BrowserWindow {
+function createMainWindow(config: RookieDshConfig): BrowserWindow {
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: config.window.width,
+    height: config.window.height,
     minWidth: 960,
     minHeight: 640,
     title: 'RookieDSH',
@@ -279,21 +280,22 @@ function createMainWindow(): BrowserWindow {
 }
 
 ipcMain.handle('runtime:start', async () => {
-  await startDsh();
+  await startRuntime();
 });
 
 ipcMain.handle('runtime:stop', async () => {
-  await stopDsh();
+  await stopRuntime();
 });
 
-ipcMain.handle('runtime:getStatus', () => getDshState());
-ipcMain.handle('runtime:getLogs', () => getDshLogs());
+ipcMain.handle('runtime:getStatus', () => getRuntimeStatus());
+ipcMain.handle('runtime:getLogs', () => getRuntimeLogs());
+ipcMain.handle('config:get', () => getConfig());
 
 ipcMain.on('shell:setPage', (_event, page: ShellPage) => {
   currentShellPage = page;
   if (page === 'runtime') {
     hideHarnessView();
-  } else if (getDshState().status === 'RUNNING') {
+  } else if (getRuntimeStatus().status === 'RUNNING') {
     showHarnessView();
   }
 });
@@ -346,11 +348,14 @@ onDshStatusChanged((info) => {
 });
 
 function bootstrap(): void {
-  const win = createMainWindow();
-  void startDsh().then(() => {
+  const config = getConfig();
+  const win = createMainWindow(config);
+  if (!config.runtime.autoStart) return;
+
+  void startRuntime().then(() => {
     if (isQuitting || win.isDestroyed()) return;
     createHarnessView();
-    if (getDshState().status === 'RUNNING' && currentShellPage === 'harness') showHarnessView();
+    if (getRuntimeStatus().status === 'RUNNING' && currentShellPage === 'harness') showHarnessView();
   }).catch((error: unknown) => {
     console.error('Harness runtime failed to start:', error);
     if (!win.isDestroyed()) win.focus();
@@ -372,7 +377,7 @@ function requestQuit(): void {
 
   isQuitting = true;
   disposeEmbeddedViews();
-  void stopDsh().finally(() => app.quit());
+  void stopRuntime().finally(() => app.quit());
 }
 
 app.on('before-quit', (event) => {

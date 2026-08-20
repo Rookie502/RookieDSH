@@ -1,34 +1,23 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import http from 'node:http';
-import path from 'node:path';
-import type { RuntimeInfo, RuntimeLogEntry, RuntimeLogStream } from '@shared/types';
+import { getConfig } from '../config/configManager';
+import {
+  INITIAL_RUNTIME_INFO,
+  type RuntimeInfo,
+  type RuntimeLaunchSpec,
+  type RuntimeLogEntry,
+  type RuntimeLogStream,
+  type RuntimeStatusListener,
+} from './RuntimeTypes';
+import {
+  detectDeepSeekHarness,
+  isDeepSeekHarnessCommand,
+  resolveDeepSeekHarnessLaunchSpec,
+} from './DeepSeekHarness';
 
-const DEFAULT_PORT = 3080;
-const RUNTIME_URL = `http://localhost:${DEFAULT_PORT}`;
-const START_TIMEOUT_MS = 15_000;
-const STOP_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 250;
-const MAX_LOG_ENTRIES = 300;
-const MAX_LOG_MESSAGE_LENGTH = 8_000;
 const LOG_NOTIFY_DEBOUNCE_MS = 100;
-
-interface LaunchSpec {
-  command: string;
-  args: string[];
-  shell?: boolean;
-  label: string;
-}
-
-type StatusListener = (info: RuntimeInfo) => void;
-
-const INITIAL_INFO: RuntimeInfo = {
-  status: 'STOPPED',
-  pid: null,
-  url: null,
-  error: null,
-  startedAt: null,
-};
+const INITIAL_INFO = INITIAL_RUNTIME_INFO;
 
 let child: ChildProcess | null = null;
 let info: RuntimeInfo = { ...INITIAL_INFO };
@@ -36,7 +25,7 @@ let startPromise: Promise<void> | null = null;
 let stopPromise: Promise<void> | null = null;
 let stopRequested = false;
 const logs: RuntimeLogEntry[] = [];
-const listeners = new Set<StatusListener>();
+const listeners = new Set<RuntimeStatusListener>();
 let logNotifyTimer: NodeJS.Timeout | null = null;
 
 function toErrorMessage(error: unknown): string {
@@ -62,9 +51,10 @@ function scheduleLogNotification(): void {
 }
 
 function appendLog(stream: RuntimeLogStream, message: string): void {
+  const { maxLogEntries, maxLogMessageLength } = getConfig().runtime;
   const raw = message.trim();
-  const trimmed = raw.length > MAX_LOG_MESSAGE_LENGTH
-    ? `${raw.slice(0, MAX_LOG_MESSAGE_LENGTH)}…`
+  const trimmed = raw.length > maxLogMessageLength
+    ? `${raw.slice(0, maxLogMessageLength)}…`
     : raw;
   if (!trimmed) return;
 
@@ -74,7 +64,7 @@ function appendLog(stream: RuntimeLogStream, message: string): void {
     message: trimmed,
   });
 
-  if (logs.length > MAX_LOG_ENTRIES) logs.splice(0, logs.length - MAX_LOG_ENTRIES);
+  if (logs.length > maxLogEntries) logs.splice(0, logs.length - maxLogEntries);
 
   if (stream === 'stderr' && (info.status === 'STARTING' || info.status === 'RUNNING')) {
     info = { ...info, error: trimmed };
@@ -84,45 +74,12 @@ function appendLog(stream: RuntimeLogStream, message: string): void {
   scheduleLogNotification();
 }
 
-function findCommand(command: string): string | null {
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA;
-    if (appData) {
-      const npmCandidate = path.join(appData, 'npm', command);
-      if (existsSync(npmCandidate)) return npmCandidate;
-    }
-
-    try {
-      const source = execFileSync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `(Get-Command '${command}' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)`,
-        ],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-      ).trim();
-      return source || null;
-    } catch {
-      return null;
-    }
-  }
-
-  try {
-    const source = execFileSync('which', [command], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return source || null;
-  } catch {
-    return null;
-  }
-}
-
 interface PortOwner {
   pid: number;
   commandLine: string;
 }
 
-function getRuntimePortOwner(): PortOwner | null {
+function getRuntimePortOwner(port: number): PortOwner | null {
   if (process.platform !== 'win32') return null;
 
   try {
@@ -132,7 +89,7 @@ function getRuntimePortOwner(): PortOwner | null {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        `$connection = Get-NetTCPConnection -LocalPort ${DEFAULT_PORT} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($connection) { $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $($connection.OwningProcess)"; [PSCustomObject]@{ pid = $connection.OwningProcess; commandLine = $owner.CommandLine } | ConvertTo-Json -Compress }`,
+        `$connection = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($connection) { $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $($connection.OwningProcess)"; [PSCustomObject]@{ pid = $connection.OwningProcess; commandLine = $owner.CommandLine } | ConvertTo-Json -Compress }`,
       ],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     ).trim();
@@ -146,49 +103,9 @@ function getRuntimePortOwner(): PortOwner | null {
   }
 }
 
-function isDeepSeekHarnessCommand(commandLine: string): boolean {
-  const normalized = commandLine.toLowerCase().replaceAll('\\', '/');
-  return normalized.includes('@deepseek-ai/dsh') || normalized.includes('/dsh/lib/bin.js');
-}
-
-function getPowerShellCommand(): string {
-  const programFiles = process.env.ProgramFiles;
-  const pwsh = programFiles ? path.join(programFiles, 'PowerShell', '7', 'pwsh.exe') : '';
-  return pwsh && existsSync(pwsh) ? pwsh : 'powershell.exe';
-}
-
-function resolveLaunchSpec(): LaunchSpec {
-  if (process.platform === 'win32') {
-    const dshCmd = findCommand('dsh.cmd');
-    if (dshCmd) {
-      return { command: dshCmd, args: ['web', '--no-open'], shell: true, label: 'dsh.cmd' };
-    }
-
-    const dshPs1 = findCommand('dsh.ps1');
-    if (dshPs1) {
-      return {
-        command: getPowerShellCommand(),
-        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', dshPs1, 'web', '--no-open'],
-        label: 'dsh.ps1',
-      };
-    }
-  } else {
-    const dsh = findCommand('dsh');
-    if (dsh) return { command: dsh, args: ['web', '--no-open'], label: 'dsh' };
-  }
-
-  const npx = process.platform === 'win32' ? findCommand('npx.cmd') ?? 'npx.cmd' : findCommand('npx') ?? 'npx';
-  return {
-    command: npx,
-    args: ['--yes', '@deepseek-ai/dsh', 'web', '--no-open'],
-    shell: process.platform === 'win32',
-    label: 'npx @deepseek-ai/dsh fallback',
-  };
-}
-
-function probeRuntime(): Promise<boolean> {
+function probeRuntime(url: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const request = http.get(RUNTIME_URL, { timeout: 750 }, (response) => {
+    const request = http.get(url, { timeout: 750 }, (response) => {
       response.resume();
       resolve(response.statusCode != null);
     });
@@ -204,25 +121,27 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForPortFree(): Promise<void> {
-  const deadline = Date.now() + STOP_TIMEOUT_MS;
+async function waitForPortFree(url: string, port: number, timeout: number): Promise<void> {
+  const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (!(await probeRuntime())) return;
+    if (!(await probeRuntime(url))) return;
     await delay(POLL_INTERVAL_MS);
   }
 
-  throw new Error(`Runtime port ${DEFAULT_PORT} is still occupied`);
+  throw new Error(`Runtime port ${port} is still occupied`);
 }
 
-async function clearOrphanedHarness(): Promise<void> {
-  if (!(await probeRuntime())) return;
+async function clearOrphanedHarness(config: ReturnType<typeof getConfig>): Promise<void> {
+  const { port, shutdownTimeout } = config.runtime;
+  const { url } = config.harness;
+  if (!(await probeRuntime(url))) return;
 
-  const owner = getRuntimePortOwner();
+  const owner = getRuntimePortOwner(port);
   if (!owner) {
-    throw new Error(`Runtime port ${DEFAULT_PORT} is already in use`);
+    throw new Error(`Runtime port ${port} is already in use`);
   }
   if (!isDeepSeekHarnessCommand(owner.commandLine)) {
-    throw new Error(`Runtime port ${DEFAULT_PORT} is already in use by PID ${owner.pid}`);
+    throw new Error(`Runtime port ${port} is already in use by PID ${owner.pid}`);
   }
 
   appendLog('system', `Stopping orphaned DeepSeek Harness process ${owner.pid}.`);
@@ -234,7 +153,7 @@ async function clearOrphanedHarness(): Promise<void> {
   } catch {
     // The orphan may have exited between detection and cleanup.
   }
-  await waitForPortFree();
+  await waitForPortFree(url, port, shutdownTimeout);
 }
 
 function terminateProcess(proc: ChildProcess): void {
@@ -256,8 +175,8 @@ function terminateProcess(proc: ChildProcess): void {
   }
 }
 
-async function waitForReady(proc: ChildProcess): Promise<void> {
-  const deadline = Date.now() + START_TIMEOUT_MS;
+async function waitForReady(proc: ChildProcess, config: ReturnType<typeof getConfig>): Promise<void> {
+  const deadline = Date.now() + config.runtime.startupTimeout;
   let processError: Error | null = null;
   let processExited = false;
   let exitCode: number | null = null;
@@ -281,18 +200,18 @@ async function waitForReady(proc: ChildProcess): Promise<void> {
       if (processExited) {
         throw new Error(`Harness process exited before becoming ready (code=${exitCode ?? 'none'}, signal=${exitSignal ?? 'none'})`);
       }
-      if (await probeRuntime()) {
+      if (await probeRuntime(config.harness.url)) {
         await delay(100);
         if (processError) throw processError;
         if (processExited) {
           throw new Error(`Harness process exited after becoming ready (code=${exitCode ?? 'none'}, signal=${exitSignal ?? 'none'})`);
         }
-        if (await probeRuntime()) return;
+        if (await probeRuntime(config.harness.url)) return;
       }
       await delay(POLL_INTERVAL_MS);
     }
 
-    throw new Error(`Harness start timed out after ${START_TIMEOUT_MS / 1000}s`);
+    throw new Error(`Harness start timed out after ${config.runtime.startupTimeout / 1000}s`);
   } finally {
     proc.removeListener('error', onError);
     proc.removeListener('exit', onExit);
@@ -335,12 +254,11 @@ function attachProcessListeners(proc: ChildProcess): void {
 
 /** Detect whether a native DeepSeek Harness CLI is installed. */
 export function detectDsh(): boolean {
-  if (process.platform === 'win32') return findCommand('dsh.cmd') != null || findCommand('dsh.ps1') != null;
-  return findCommand('dsh') != null;
+  return detectDeepSeekHarness(getConfig());
 }
 
 /** Subscribe to Runtime state and log changes. Returns an unsubscribe function. */
-export function onDshStatusChanged(listener: StatusListener): () => void {
+export function onDshStatusChanged(listener: RuntimeStatusListener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
@@ -361,11 +279,12 @@ export function startDsh(): Promise<void> {
 async function startDshInternal(): Promise<void> {
   setInfo({ ...INITIAL_INFO, status: 'STARTING' });
 
-  let spec: LaunchSpec;
+  const config = getConfig();
+  let spec: RuntimeLaunchSpec;
   try {
-    spec = resolveLaunchSpec();
+    spec = resolveDeepSeekHarnessLaunchSpec(config);
     appendLog('system', `Starting Harness with ${spec.label}.`);
-    await clearOrphanedHarness();
+    await clearOrphanedHarness(config);
     const proc = spawn(spec.command, spec.args, {
       shell: spec.shell,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -374,7 +293,7 @@ async function startDshInternal(): Promise<void> {
     child = proc;
     attachProcessListeners(proc);
 
-    await waitForReady(proc);
+    await waitForReady(proc, config);
 
     if (child !== proc || info.status !== 'STARTING') {
       throw new Error('Harness start was cancelled');
@@ -383,11 +302,11 @@ async function startDshInternal(): Promise<void> {
     setInfo({
       status: 'RUNNING',
       pid: proc.pid ?? null,
-      url: RUNTIME_URL,
+      url: config.harness.url,
       error: null,
       startedAt: new Date().toISOString(),
     });
-    appendLog('system', `Harness is running at ${RUNTIME_URL}.`);
+    appendLog('system', `Harness is running at ${config.harness.url}.`);
   } catch (error) {
     const message = toErrorMessage(error);
     if (info.status === 'STARTING') {
@@ -413,6 +332,7 @@ export function stopDsh(): Promise<void> {
   }
 
   stopRequested = true;
+  const shutdownTimeout = getConfig().runtime.shutdownTimeout;
   setInfo({ status: 'STOPPING', error: null });
   appendLog('system', 'Stopping Harness.');
 
@@ -431,12 +351,12 @@ export function stopDsh(): Promise<void> {
         terminateProcess(proc);
         child = null;
         stopRequested = false;
-        const message = `Harness did not stop within ${STOP_TIMEOUT_MS / 1000}s`;
+        const message = `Harness did not stop within ${shutdownTimeout / 1000}s`;
         appendLog('system', message);
         setInfo({ status: 'FAILED', pid: null, url: null, error: message });
       }
       finish();
-    }, STOP_TIMEOUT_MS);
+    }, shutdownTimeout);
 
     proc.once('exit', finish);
     proc.once('error', finish);

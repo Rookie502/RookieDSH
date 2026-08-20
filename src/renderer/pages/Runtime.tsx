@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { RookieDshConfig } from '@shared/configTypes';
 import type { RuntimeInfo, RuntimeLogEntry } from '@shared/types';
 
 const INITIAL_INFO: RuntimeInfo = {
@@ -12,6 +13,7 @@ const INITIAL_INFO: RuntimeInfo = {
 export default function Runtime() {
   const [info, setInfo] = useState<RuntimeInfo>(INITIAL_INFO);
   const [logs, setLogs] = useState<RuntimeLogEntry[]>([]);
+  const [config, setConfig] = useState<RookieDshConfig | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -42,6 +44,7 @@ export default function Runtime() {
     });
 
     void load();
+    void window.rookiedsh?.config.get().then(setConfig).catch(() => undefined);
     return () => {
       disposed = true;
       unsubscribe();
@@ -92,7 +95,7 @@ export default function Runtime() {
         <p><strong>Status:</strong> {formatStatus(info.status)}</p>
         <p><strong>PID:</strong> {info.pid ?? '—'}</p>
         <p><strong>URL:</strong> {info.url ?? '—'}</p>
-        <p><strong>Port:</strong> 3080</p>
+        <p><strong>Port:</strong> {config?.runtime.port ?? '—'}</p>
         <p><strong>Uptime:</strong> {uptime}</p>
         {latestError && <p style={{ color: 'crimson' }}><strong>Latest error:</strong> {latestError}</p>}
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>

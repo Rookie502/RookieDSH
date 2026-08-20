@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { RookieDshConfig } from '@shared/configTypes';
 import type {
   FloatingPosition,
   RookieDshApi,
@@ -10,6 +11,9 @@ import type {
 const api: RookieDshApi = {
   get appVersion() {
     return '0.1.0';
+  },
+  config: {
+    get: () => ipcRenderer.invoke('config:get') as Promise<RookieDshConfig>,
   },
   runtime: {
     start: () => ipcRenderer.invoke('runtime:start') as Promise<void>,

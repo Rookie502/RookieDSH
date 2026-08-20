@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { RookieDshConfig } from '@shared/configTypes';
 import type { RuntimeInfo } from '@shared/types';
 
 const INITIAL_INFO: RuntimeInfo = {
@@ -11,6 +12,7 @@ const INITIAL_INFO: RuntimeInfo = {
 
 export default function StartupScreen() {
   const [info, setInfo] = useState<RuntimeInfo>(INITIAL_INFO);
+  const [config, setConfig] = useState<RookieDshConfig | null>(null);
   const [waitingSeconds, setWaitingSeconds] = useState(0);
 
   useEffect(() => {
@@ -23,9 +25,15 @@ export default function StartupScreen() {
     });
 
     void runtime.getStatus().then((nextInfo) => {
-      if (!disposed && nextInfo.status !== 'STOPPED') setInfo(nextInfo);
+      if (!disposed) setInfo(nextInfo);
     }).catch(() => {
       // The startup state remains visible if the bridge is temporarily unavailable.
+    });
+
+    void window.rookiedsh?.config.get().then((nextConfig) => {
+      if (!disposed) setConfig(nextConfig);
+    }).catch(() => {
+      // The runtime status remains useful if configuration loading is delayed.
     });
 
     return () => {
@@ -61,6 +69,7 @@ export default function StartupScreen() {
   }
 
   const isFailed = info.status === 'FAILED';
+  const isStopped = info.status === 'STOPPED';
   const isRunning = info.status === 'RUNNING';
 
   if (isRunning) return null;
@@ -69,27 +78,28 @@ export default function StartupScreen() {
     <section className="startup-screen" aria-live="polite">
       <div className="startup-card">
         <div className="startup-brand">RookieDSH</div>
-        <h1>{isFailed ? 'Runtime unavailable' : 'Initializing...'}</h1>
-        {!isFailed && (
+        <h1>{isFailed ? 'Runtime unavailable' : isStopped ? 'Runtime stopped' : 'Initializing...'}</h1>
+        {!isFailed && !isStopped && (
           <p className="startup-detail">
-            Connecting to localhost:3080{waitingSeconds > 0 ? ` · ${waitingSeconds}s` : ''}
+            Connecting to {config ? `localhost:${config.runtime.port}` : 'Harness'}{waitingSeconds > 0 ? ` · ${waitingSeconds}s` : ''}
           </p>
         )}
         <div className="startup-steps">
           <StartupStep label="Electron ready" state="done" />
           <StartupStep
             label="Starting DeepSeek Harness"
-            state={isFailed ? 'failed' : info.status === 'STARTING' ? 'active' : 'done'}
+            state={isFailed ? 'failed' : isStopped ? 'pending' : info.status === 'STARTING' ? 'active' : 'done'}
           />
           <StartupStep
             label="Connecting Runtime"
-            state={isFailed ? 'failed' : info.status === 'STARTING' ? 'active' : 'pending'}
+            state={isFailed ? 'failed' : isStopped ? 'pending' : info.status === 'STARTING' ? 'active' : 'pending'}
           />
         </div>
-        {isFailed && (
+        {isStopped && <p className="startup-detail">Automatic startup is disabled in configuration.</p>}
+        {(isFailed || isStopped) && (
           <>
-            <p className="startup-error">{info.error ?? 'The Harness runtime failed to start.'}</p>
-            <button type="button" onClick={() => void retry()}>Retry Runtime</button>
+            {isFailed && <p className="startup-error">{info.error ?? 'The Harness runtime failed to start.'}</p>}
+            <button type="button" onClick={() => void retry()}>{isStopped ? 'Start Runtime' : 'Retry Runtime'}</button>
           </>
         )}
       </div>

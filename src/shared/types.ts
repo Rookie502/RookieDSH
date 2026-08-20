@@ -1,5 +1,7 @@
 // Shared types between main, preload and renderer.
 
+import type { RookieDshConfig } from './configTypes';
+
 export type RuntimeStatus = 'STOPPED' | 'STARTING' | 'RUNNING' | 'STOPPING' | 'FAILED';
 
 export interface RuntimeInfo {
@@ -30,6 +32,9 @@ export type DshRuntimeState = RuntimeInfo;
 
 export interface RookieDshApi {
   readonly appVersion: string;
+  config: {
+    get(): Promise<RookieDshConfig>;
+  };
   runtime: {
     start(): Promise<void>;
     stop(): Promise<void>;

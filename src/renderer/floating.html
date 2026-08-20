@@ -51,6 +51,7 @@
   <body>
     <section id="panel" hidden role="dialog" aria-label="Settings panel">
       <strong>Settings</strong>
+      <p id="runtime-config">Loading runtime configuration…</p>
     </section>
     <button id="fab" type="button" aria-label="Open settings panel">⚙</button>
     <script>
@@ -58,6 +59,7 @@
       const shell = window.rookiedsh.shell;
       const fab = document.getElementById('fab');
       const panel = document.getElementById('panel');
+      const runtimeConfig = document.getElementById('runtime-config');
       let panelOpen = false;
       let drag = null;
       let moved = false;
@@ -122,6 +124,12 @@
           event.preventDefault();
           togglePanel();
         }
+      });
+
+      window.rookiedsh.config.get().then((config) => {
+        runtimeConfig.textContent = `Harness Port: ${config.runtime.port} · Command: ${config.runtime.command}`;
+      }).catch(() => {
+        runtimeConfig.textContent = 'Runtime configuration unavailable.';
       });
 
       (async () => {
