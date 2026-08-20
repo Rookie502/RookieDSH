@@ -1,1 +1,3 @@
 # RookieDSH
+使用方法
+npm run dev
