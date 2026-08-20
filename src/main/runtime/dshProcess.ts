@@ -10,6 +10,8 @@ const START_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 250;
 const MAX_LOG_ENTRIES = 300;
+const MAX_LOG_MESSAGE_LENGTH = 8_000;
+const LOG_NOTIFY_DEBOUNCE_MS = 100;
 
 interface LaunchSpec {
   command: string;
@@ -35,6 +37,7 @@ let stopPromise: Promise<void> | null = null;
 let stopRequested = false;
 const logs: RuntimeLogEntry[] = [];
 const listeners = new Set<StatusListener>();
+let logNotifyTimer: NodeJS.Timeout | null = null;
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -50,8 +53,19 @@ function setInfo(patch: Partial<RuntimeInfo>): void {
   notifyStatusChanged();
 }
 
+function scheduleLogNotification(): void {
+  if (logNotifyTimer) return;
+  logNotifyTimer = setTimeout(() => {
+    logNotifyTimer = null;
+    notifyStatusChanged();
+  }, LOG_NOTIFY_DEBOUNCE_MS);
+}
+
 function appendLog(stream: RuntimeLogStream, message: string): void {
-  const trimmed = message.trim();
+  const raw = message.trim();
+  const trimmed = raw.length > MAX_LOG_MESSAGE_LENGTH
+    ? `${raw.slice(0, MAX_LOG_MESSAGE_LENGTH)}…`
+    : raw;
   if (!trimmed) return;
 
   logs.push({
@@ -66,8 +80,8 @@ function appendLog(stream: RuntimeLogStream, message: string): void {
     info = { ...info, error: trimmed };
   }
 
-  // The same event also wakes the renderer to fetch the latest log buffer.
-  notifyStatusChanged();
+  // Batch noisy stdout/stderr bursts into at most one renderer notification per window.
+  scheduleLogNotification();
 }
 
 function findCommand(command: string): string | null {
@@ -101,6 +115,40 @@ function findCommand(command: string): string | null {
   } catch {
     return null;
   }
+}
+
+interface PortOwner {
+  pid: number;
+  commandLine: string;
+}
+
+function getRuntimePortOwner(): PortOwner | null {
+  if (process.platform !== 'win32') return null;
+
+  try {
+    const raw = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$connection = Get-NetTCPConnection -LocalPort ${DEFAULT_PORT} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($connection) { $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $($connection.OwningProcess)"; [PSCustomObject]@{ pid = $connection.OwningProcess; commandLine = $owner.CommandLine } | ConvertTo-Json -Compress }`,
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as { pid?: number; commandLine?: string };
+    if (typeof parsed.pid !== 'number' || !Number.isInteger(parsed.pid) || typeof parsed.commandLine !== 'string') return null;
+    return { pid: parsed.pid, commandLine: parsed.commandLine };
+  } catch {
+    return null;
+  }
+}
+
+function isDeepSeekHarnessCommand(commandLine: string): boolean {
+  const normalized = commandLine.toLowerCase().replaceAll('\\', '/');
+  return normalized.includes('@deepseek-ai/dsh') || normalized.includes('/dsh/lib/bin.js');
 }
 
 function getPowerShellCommand(): string {
@@ -156,6 +204,39 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForPortFree(): Promise<void> {
+  const deadline = Date.now() + STOP_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (!(await probeRuntime())) return;
+    await delay(POLL_INTERVAL_MS);
+  }
+
+  throw new Error(`Runtime port ${DEFAULT_PORT} is still occupied`);
+}
+
+async function clearOrphanedHarness(): Promise<void> {
+  if (!(await probeRuntime())) return;
+
+  const owner = getRuntimePortOwner();
+  if (!owner) {
+    throw new Error(`Runtime port ${DEFAULT_PORT} is already in use`);
+  }
+  if (!isDeepSeekHarnessCommand(owner.commandLine)) {
+    throw new Error(`Runtime port ${DEFAULT_PORT} is already in use by PID ${owner.pid}`);
+  }
+
+  appendLog('system', `Stopping orphaned DeepSeek Harness process ${owner.pid}.`);
+  try {
+    execFileSync('taskkill.exe', ['/pid', String(owner.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  } catch {
+    // The orphan may have exited between detection and cleanup.
+  }
+  await waitForPortFree();
+}
+
 function terminateProcess(proc: ChildProcess): void {
   if (process.platform === 'win32' && proc.pid != null) {
     try {
@@ -200,7 +281,14 @@ async function waitForReady(proc: ChildProcess): Promise<void> {
       if (processExited) {
         throw new Error(`Harness process exited before becoming ready (code=${exitCode ?? 'none'}, signal=${exitSignal ?? 'none'})`);
       }
-      if (await probeRuntime()) return;
+      if (await probeRuntime()) {
+        await delay(100);
+        if (processError) throw processError;
+        if (processExited) {
+          throw new Error(`Harness process exited after becoming ready (code=${exitCode ?? 'none'}, signal=${exitSignal ?? 'none'})`);
+        }
+        if (await probeRuntime()) return;
+      }
       await delay(POLL_INTERVAL_MS);
     }
 
@@ -277,6 +365,7 @@ async function startDshInternal(): Promise<void> {
   try {
     spec = resolveLaunchSpec();
     appendLog('system', `Starting Harness with ${spec.label}.`);
+    await clearOrphanedHarness();
     const proc = spawn(spec.command, spec.args, {
       shell: spec.shell,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -361,6 +450,9 @@ export function stopDsh(): Promise<void> {
 
 /** Best-effort synchronous fallback for abrupt Electron process termination. */
 export function cleanupDshSync(): void {
+  if (logNotifyTimer) clearTimeout(logNotifyTimer);
+  logNotifyTimer = null;
+
   const proc = child;
   if (!proc) return;
 

@@ -41,3 +41,66 @@ body {
   margin-top: 0;
   font-size: 20px;
 }
+
+.startup-screen {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  padding: 32px;
+  background: var(--bg);
+}
+
+.startup-card {
+  width: min(420px, 100%);
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.startup-brand {
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.startup-card h1 {
+  margin: 22px 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.startup-detail {
+  margin: -10px 0 22px;
+  color: var(--muted);
+}
+
+.startup-steps {
+  display: grid;
+  gap: 12px;
+}
+
+.startup-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.startup-step.done { color: var(--text); }
+.startup-step.active { color: var(--accent); }
+.startup-step.failed { color: #e57373; }
+
+.startup-step-symbol {
+  width: 18px;
+  color: currentColor;
+  font-weight: 700;
+  text-align: center;
+}
+
+.startup-error {
+  margin: 20px 0;
+  color: #e57373;
+  line-height: 1.5;
+}

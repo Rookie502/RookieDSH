@@ -12,6 +12,8 @@ import {
 
 const isDev = !app.isPackaged;
 const HARNESS_URL = 'http://localhost:3080';
+const DEV_SERVER_URL = process.env.ROOKIE_DSH_DEV_SERVER_URL ?? 'http://localhost:5173';
+const STARTUP_STARTED_AT = Number(process.env.ROOKIE_DSH_DEV_STARTED_AT) || Date.now();
 const FLOATING_EDGE_GAP = 16;
 const FLOATING_BUTTON_SIZE = 56;
 const FLOATING_VIEW_SIZE = FLOATING_BUTTON_SIZE;
@@ -189,6 +191,8 @@ function disposeEmbeddedViews(): void {
 }
 
 function createHarnessView(): BrowserView {
+  if (harnessView && !harnessView.webContents.isDestroyed()) return harnessView;
+
   const view = new BrowserView({
     webPreferences: {
       contextIsolation: true,
@@ -204,6 +208,9 @@ function createHarnessView(): BrowserView {
   view.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     harnessNeedsReload = true;
     console.error(`Harness UI failed to load (${errorCode}): ${errorDescription}`);
+  });
+  view.webContents.on('did-finish-load', () => {
+    console.log(`ROOKIE_DSH_METRIC harness-ready-ms=${Date.now() - STARTUP_STARTED_AT}`);
   });
   harnessView = view;
   return view;
@@ -224,7 +231,7 @@ function createFloatingView(win: BrowserWindow): BrowserView {
   floatingAttached = true;
   updateFloatingBounds();
   const floatingPage = isDev
-    ? view.webContents.loadURL('http://localhost:5173/floating.html')
+    ? view.webContents.loadURL(`${DEV_SERVER_URL}/floating.html`)
     : view.webContents.loadFile(path.join(__dirname, '../renderer/floating.html'));
   floatingPage.catch((error: unknown) => {
     console.error('Floating action button load failed:', error);
@@ -239,6 +246,8 @@ function createMainWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 640,
     title: 'RookieDSH',
+    show: true,
+    backgroundColor: '#1e1f24',
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.cjs'),
       contextIsolation: true,
@@ -248,16 +257,23 @@ function createMainWindow(): BrowserWindow {
 
   mainWindow = win;
   createFloatingView(win);
+  win.webContents.on('did-finish-load', () => {
+    console.log(`ROOKIE_DSH_METRIC electron-ready-ms=${Date.now() - STARTUP_STARTED_AT}`);
+  });
   win.on('resize', () => {
     updateHarnessBounds();
     updateFloatingBounds();
   });
 
   if (isDev) {
-    win.loadURL('http://localhost:5173');
+    win.loadURL(DEV_SERVER_URL);
   } else {
     win.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
+
+  win.show();
+  win.focus();
+  if (process.platform === 'win32') win.moveTop();
 
   return win;
 }
@@ -323,19 +339,22 @@ onDshStatusChanged((info) => {
   }
 
   if (info.status === 'RUNNING' && currentShellPage === 'harness') showHarnessView();
-  if (info.status === 'STOPPED' || info.status === 'FAILED') harnessNeedsReload = true;
+  if (info.status === 'STOPPED' || info.status === 'FAILED') {
+    harnessNeedsReload = true;
+    hideHarnessView();
+  }
 });
 
-async function bootstrap(): Promise<void> {
+function bootstrap(): void {
   const win = createMainWindow();
-  try {
-    await startDsh();
+  void startDsh().then(() => {
+    if (isQuitting || win.isDestroyed()) return;
     createHarnessView();
     if (getDshState().status === 'RUNNING' && currentShellPage === 'harness') showHarnessView();
-  } catch (error) {
+  }).catch((error: unknown) => {
     console.error('Harness runtime failed to start:', error);
     if (!win.isDestroyed()) win.focus();
-  }
+  });
 }
 
 app.whenReady().then(() => {
