@@ -20,6 +20,24 @@ export interface RuntimeLogEntry {
   message: string;
 }
 
+export interface RuntimeDiagnosticEvent {
+  timestamp: string;
+  status: RuntimeStatus;
+  message: string;
+}
+
+export interface RuntimeDiagnostics {
+  lastStartTime: string | null;
+  lastStopTime: string | null;
+  lastError: string | null;
+  /** Startup attempt duration in milliseconds. */
+  startupDuration: number | null;
+  restartCount: number;
+  lastStatus: RuntimeStatus;
+  lastStatusChangedAt: string | null;
+  recentEvents: RuntimeDiagnosticEvent[];
+}
+
 export type ShellPage = 'harness' | 'runtime';
 
 export interface FloatingPosition {
@@ -40,6 +58,7 @@ export interface RookieDshApi {
     stop(): Promise<void>;
     getStatus(): Promise<RuntimeInfo>;
     getLogs(): Promise<RuntimeLogEntry[]>;
+    getDiagnostics(): Promise<RuntimeDiagnostics>;
     onStatusChanged(listener: (info: RuntimeInfo) => void): () => void;
   };
   shell: {

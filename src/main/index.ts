@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { RookieDshConfig } from '@shared/configTypes';
 import type { FloatingPosition, ShellPage } from '@shared/types';
 import { getConfig } from './config/configManager';
+import { getDiagnostics, recordRuntimeStatus } from './diagnostics/diagnosticsManager';
 import {
   cleanupDshSync,
   getRuntimeLogs,
@@ -289,6 +290,7 @@ ipcMain.handle('runtime:stop', async () => {
 
 ipcMain.handle('runtime:getStatus', () => getRuntimeStatus());
 ipcMain.handle('runtime:getLogs', () => getRuntimeLogs());
+ipcMain.handle('runtime:getDiagnostics', () => getDiagnostics());
 ipcMain.handle('config:get', () => getConfig());
 
 ipcMain.on('shell:setPage', (_event, page: ShellPage) => {
@@ -336,6 +338,7 @@ ipcMain.on('shell:setFloatingPanelOpen', (_event, open: boolean) => {
 });
 
 onDshStatusChanged((info) => {
+  recordRuntimeStatus(info);
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send('runtime:statusChanged', info);
   }

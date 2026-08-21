@@ -2,6 +2,8 @@
 
 RookieDSH is a **Desktop Runtime Host for DeepSeek Harness**.
 
+Current release: `v0.2.1` — Runtime Control Center Foundation.
+
 It provides a lightweight Electron shell that starts the DeepSeek Harness runtime, waits for its local web UI, and embeds that UI inside the RookieDSH window. The app does not open an external browser.
 
 ## Architecture
@@ -66,8 +68,8 @@ The current Renderer API exposes read-only configuration access through `config.
 ## Current Limitations
 
 - DeepSeek Harness is the only supported Runtime provider.
-- The Control Panel currently provides a lightweight configuration placeholder.
-- Configuration editing, diagnostics history and persistent Runtime logs are not implemented.
+- The Control Center provides Runtime status, diagnostics and read-only configuration visibility.
+- Configuration editing and persistent Runtime log storage are not implemented; diagnostics events are bounded to the recent history kept in `diagnostics.json`.
 - Agent, Workspace, Runs, database and model-management features are not part of the current product.
 
 ## Roadmap

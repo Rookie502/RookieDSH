@@ -4,13 +4,14 @@ import type {
   FloatingPosition,
   RookieDshApi,
   RuntimeInfo,
+  RuntimeDiagnostics,
   RuntimeLogEntry,
   ShellPage,
 } from '@shared/types';
 
 const api: RookieDshApi = {
   get appVersion() {
-    return '0.1.0';
+    return '0.2.1';
   },
   config: {
     get: () => ipcRenderer.invoke('config:get') as Promise<RookieDshConfig>,
@@ -20,6 +21,7 @@ const api: RookieDshApi = {
     stop: () => ipcRenderer.invoke('runtime:stop') as Promise<void>,
     getStatus: () => ipcRenderer.invoke('runtime:getStatus') as Promise<RuntimeInfo>,
     getLogs: () => ipcRenderer.invoke('runtime:getLogs') as Promise<RuntimeLogEntry[]>,
+    getDiagnostics: () => ipcRenderer.invoke('runtime:getDiagnostics') as Promise<RuntimeDiagnostics>,
     onStatusChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, info: RuntimeInfo) => listener(info);
       ipcRenderer.on('runtime:statusChanged', handler);
