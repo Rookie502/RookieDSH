@@ -21,6 +21,8 @@ export interface FloatingConfig {
   panelWidth: number;
 }
 
+export type Language = 'zh-CN' | 'en-US';
+
 export const CONTROL_CENTER_WIDTH_DEFAULT = 420;
 export const CONTROL_CENTER_WIDTH_MIN = 320;
 export const CONTROL_CENTER_WIDTH_MAX = 600;
@@ -34,6 +36,7 @@ export interface HarnessConfig {
 }
 
 export interface RookieDshConfig {
+  language: Language;
   runtime: RuntimeConfig;
   window: WindowConfig;
   floating: FloatingConfig;

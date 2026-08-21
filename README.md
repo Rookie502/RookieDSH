@@ -2,7 +2,7 @@
 
 RookieDSH is a **Desktop Runtime Host for DeepSeek Harness**.
 
-Current release: `v0.3.2` — Configurable Control Center Layout.
+Current release: `v0.3.3` — Localized Control Center Foundation.
 
 It provides a lightweight Electron shell that starts the DeepSeek Harness runtime, waits for its local web UI, and embeds that UI inside the RookieDSH window. The app does not open an external browser.
 
@@ -77,8 +77,13 @@ Current configuration areas:
 - Runtime log limits
 - Default window size
 - Control Center width (default 420px, bounded to 320–600px)
+- UI language (`zh-CN` or `en-US`), following the system on first launch
 
-The current Renderer API exposes read-only configuration access through `config.get()`. Editing configuration from the UI is intentionally not implemented yet.
+The Renderer accesses configuration only through Preload IPC. The Control Center language switch persists through `config.setLanguage()` and takes effect immediately without restarting the app. Other configuration values remain read-only for now.
+
+## Control Center Views
+
+The Control Center is an overlay BrowserView with lightweight navigation for Overview, Runtime, Models, Workspace, Tasks and Settings. Overview, Runtime, Diagnostics and Configuration use the existing Runtime/Core IPC data. Models, Workspace and Tasks retain intentionally small foundation views; they do not implement Agent orchestration, model routing or task execution.
 
 ## Foundation Core
 
@@ -107,6 +112,7 @@ The Control Center now includes a Core Overview showing Workspace count, active 
 - v0.2 Foundation: configuration layer, Runtime boundary cleanup, diagnostics and legacy page archival.
 - v0.2.1: Runtime Control Center and diagnostics visibility.
 - v0.3 Foundation Core: local control-plane models, persistence boundary, Core IPC and Core Overview.
+- v0.3.3: localized Control Center, view navigation and platform foundation placeholders.
 - Next: define the Runtime adapter contract and event synchronization rules before implementing Agent workflows.
 
 ## Development

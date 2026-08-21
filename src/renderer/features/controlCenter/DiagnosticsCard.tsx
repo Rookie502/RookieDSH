@@ -1,4 +1,5 @@
 import type { RuntimeDiagnostics, RuntimeLogEntry } from '@shared/types';
+import { getLanguage, t } from '../../i18n';
 import { formatDuration } from './RuntimeCard';
 
 export default function DiagnosticsCard({ diagnostics, logs }: { diagnostics: RuntimeDiagnostics; logs: RuntimeLogEntry[] }) {
@@ -8,23 +9,23 @@ export default function DiagnosticsCard({ diagnostics, logs }: { diagnostics: Ru
     <article className="control-card diagnostics-card">
       <div className="card-heading">
         <div>
-          <div className="card-kicker">Diagnostics</div>
-          <h2>Runtime health</h2>
+          <div className="card-kicker">{t('diagnostics.eyebrow')}</div>
+          <h2>{t('diagnostics.title')}</h2>
         </div>
-        <span className="diagnostics-count">{diagnostics.restartCount} restarts</span>
+        <span className="diagnostics-count">{diagnostics.restartCount} {t('diagnostics.restarts')}</span>
       </div>
 
       <div className="diagnostics-summary">
-        <DiagnosticValue label="Last Startup" value={formatTimestamp(diagnostics.lastStartTime)} />
-        <DiagnosticValue label="Startup Duration" value={formatDuration(diagnostics.startupDuration)} />
-        <DiagnosticValue label="Last Error" value={diagnostics.lastError ?? 'None'} error={Boolean(diagnostics.lastError)} />
+        <DiagnosticValue label={t('diagnostics.lastStartup')} value={formatTimestamp(diagnostics.lastStartTime)} />
+        <DiagnosticValue label={t('diagnostics.startupDuration')} value={formatDuration(diagnostics.startupDuration)} />
+        <DiagnosticValue label={t('diagnostics.lastError')} value={diagnostics.lastError ?? t('diagnostics.none')} error={Boolean(diagnostics.lastError)} />
       </div>
 
       <div className="logs-section">
-        <div className="logs-title">Recent Logs</div>
+        <div className="logs-title">{t('diagnostics.recentLogs')}</div>
         <pre className="logs-list">
           {recentLogs.length === 0
-            ? 'No logs yet.'
+            ? t('diagnostics.noLogs')
             : recentLogs.map((entry) => `[${formatLogTime(entry.timestamp)}] ${entry.message}`).join('\n')}
         </pre>
       </div>
@@ -43,9 +44,9 @@ function DiagnosticValue({ label, value, error = false }: { label: string; value
 
 function formatTimestamp(value: string | null): string {
   if (!value) return '—';
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString(getLanguage());
 }
 
 function formatLogTime(value: string): string {
-  return new Date(value).toLocaleTimeString();
+  return new Date(value).toLocaleTimeString(getLanguage());
 }

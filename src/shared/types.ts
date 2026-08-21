@@ -1,6 +1,6 @@
 // Shared types between main, preload and renderer.
 
-import type { RookieDshConfig } from './configTypes';
+import type { Language, RookieDshConfig } from './configTypes';
 import type {
   CoreEvent,
   CoreOverview,
@@ -79,6 +79,7 @@ export interface RookieDshApi {
   readonly appVersion: string;
   config: {
     get(): Promise<RookieDshConfig>;
+    setLanguage(language: Language): Promise<Language>;
   };
   runtime: {
     start(): Promise<void>;

@@ -5,12 +5,14 @@ import {
   CONTROL_CENTER_WIDTH_DEFAULT,
   CONTROL_CENTER_WIDTH_MAX,
   CONTROL_CENTER_WIDTH_MIN,
+  type Language,
   type RookieDshConfig,
 } from '@shared/configTypes';
 
 const CONFIG_FILE_NAME = 'config.json';
 
 export const DEFAULT_CONFIG: RookieDshConfig = {
+  language: 'en-US',
   runtime: {
     command: 'dsh',
     fallbackCommand: 'npx',
@@ -40,6 +42,7 @@ let cachedConfig: RookieDshConfig | null = null;
 
 function cloneConfig(config: RookieDshConfig): RookieDshConfig {
   return {
+    language: config.language,
     runtime: { ...config.runtime },
     window: { ...config.window },
     floating: { ...config.floating },
@@ -64,6 +67,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+export function getSystemLanguage(): Language {
+  try {
+    return app.getLocale().toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+  } catch {
+    return 'en-US';
+  }
+}
+
+function languageValue(value: unknown, fallback: Language): Language {
+  return value === 'zh-CN' || value === 'en-US' ? value : fallback;
 }
 
 function integerValue(value: unknown, fallback: number, minimum: number): number {
@@ -96,8 +111,10 @@ function normalizeConfig(value: unknown): RookieDshConfig {
   const floating = isRecord(root.floating) ? root.floating : {};
   const controlCenter = isRecord(root.controlCenter) ? root.controlCenter : {};
   const harness = isRecord(root.harness) ? root.harness : {};
+  const defaultLanguage = getSystemLanguage();
 
   return {
+    language: languageValue(root.language, defaultLanguage),
     runtime: {
       command: stringValue(runtime.command, DEFAULT_CONFIG.runtime.command),
       fallbackCommand: stringValue(runtime.fallbackCommand, DEFAULT_CONFIG.runtime.fallbackCommand),
@@ -135,7 +152,7 @@ export function getConfig(): RookieDshConfig {
 
   const filePath = configPath();
   if (!existsSync(filePath)) {
-    cachedConfig = cloneConfig(DEFAULT_CONFIG);
+    cachedConfig = cloneConfig({ ...DEFAULT_CONFIG, language: getSystemLanguage() });
     writeConfig(cachedConfig);
     return cloneConfig(cachedConfig);
   }
@@ -146,7 +163,7 @@ export function getConfig(): RookieDshConfig {
     writeConfig(cachedConfig);
   } catch (error) {
     console.warn(`RookieDSH: invalid configuration, restoring defaults (${String(error)}).`);
-    cachedConfig = cloneConfig(DEFAULT_CONFIG);
+    cachedConfig = cloneConfig({ ...DEFAULT_CONFIG, language: getSystemLanguage() });
     writeConfig(cachedConfig);
   }
 

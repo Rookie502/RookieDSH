@@ -4,6 +4,7 @@ import {
   CONTROL_CENTER_WIDTH_DEFAULT,
   CONTROL_CENTER_WIDTH_MAX,
   CONTROL_CENTER_WIDTH_MIN,
+  type Language,
   type RookieDshConfig,
 } from '@shared/configTypes';
 import type {
@@ -463,6 +464,10 @@ ipcMain.handle('runtime:getStatus', () => getRuntimeStatus());
 ipcMain.handle('runtime:getLogs', () => getRuntimeLogs());
 ipcMain.handle('runtime:getDiagnostics', () => getDiagnostics());
 ipcMain.handle('config:get', () => getConfig());
+ipcMain.handle('config:setLanguage', (_event, language: Language) => {
+  const config = getConfig();
+  return saveConfig({ ...config, language }).language;
+});
 
 ipcMain.handle('core:overview', () => getCoreOverview());
 ipcMain.handle('workspace:create', (_event, input: WorkspaceCreateInput) => createWorkspace(input));

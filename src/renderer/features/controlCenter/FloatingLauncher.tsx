@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { ControlCenterState, FloatingPosition } from '@shared/types';
+import { t } from '../../i18n';
 
 interface DragState {
   pointerId: number;
@@ -71,9 +72,9 @@ export default function FloatingLauncher() {
       ref={buttonRef}
       className={active ? 'floating-launcher active' : 'floating-launcher'}
       type="button"
-      aria-label="Toggle Control Center"
+      aria-label={t('controlCenter.title')}
       aria-pressed={active}
-      title="Control Center"
+      title={t('controlCenter.title')}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}

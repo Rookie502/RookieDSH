@@ -50,6 +50,7 @@ button { font: inherit; }
 }
 
 .control-center-header { margin-bottom: 18px; }
+.control-center-header-actions { display: flex; align-items: flex-start; gap: 10px; }
 .control-center-eyebrow,
 .card-kicker { color: var(--control-accent); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .control-center h1 { margin: 4px 0 0; font-size: 21px; font-weight: 600; }
@@ -57,7 +58,18 @@ button { font: inherit; }
 .control-center-close { border: 0; background: transparent; color: var(--control-muted); cursor: pointer; font-size: 24px; line-height: 1; }
 .control-center-close:hover { color: var(--control-text); }
 
+.language-switch { display: inline-flex; align-items: center; gap: 5px; color: var(--control-muted); font-size: 11px; white-space: nowrap; }
+.language-switch button { border: 0; padding: 2px 0; background: transparent; color: var(--control-muted); cursor: pointer; }
+.language-switch button:hover,
+.language-switch button.active { color: var(--control-text); }
+
+.control-center-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 14px; padding: 4px; border: 1px solid var(--control-border); border-radius: 8px; background: rgba(0, 0, 0, .12); }
+.control-center-nav button { min-width: 0; overflow: hidden; border: 0; border-radius: 5px; padding: 7px 5px; background: transparent; color: var(--control-muted); cursor: pointer; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.control-center-nav button:hover,
+.control-center-nav button.active { background: var(--control-accent); color: white; }
+
 .control-center-grid { display: grid; width: 100%; min-width: 0; gap: 12px; }
+.control-center-view-stack { display: grid; min-width: 0; gap: 12px; }
 .control-card { width: 100%; min-width: 0; overflow: hidden; padding: 15px; border: 1px solid var(--control-border); border-radius: 9px; background: var(--control-card); }
 .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 99px; color: var(--control-muted); font-size: 11px; text-transform: capitalize; }
 .status-running { color: var(--control-green); background: rgba(102, 201, 133, .1); }
@@ -94,6 +106,16 @@ button { font: inherit; }
 .logs-title { margin-bottom: 6px; color: var(--control-muted); font-size: 11px; }
 .logs-list { max-width: 100%; min-width: 0; max-height: 150px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; color: var(--control-muted); font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .muted-text { color: var(--control-muted); }
+
+.placeholder-card p { color: var(--control-muted); line-height: 1.5; }
+.placeholder-detail { display: flex; min-width: 0; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--control-border); }
+.placeholder-detail span { color: var(--control-muted); }
+.placeholder-detail strong { min-width: 0; color: var(--control-text); text-align: right; overflow-wrap: anywhere; }
+.entity-list { display: grid; gap: 8px; margin-top: 16px; }
+.entity-row { display: grid; gap: 5px; min-width: 0; padding: 10px; border: 1px solid var(--control-border); border-radius: 6px; background: rgba(0, 0, 0, .12); }
+.entity-row strong { overflow-wrap: anywhere; }
+.entity-row span { min-width: 0; color: var(--control-muted); overflow-wrap: anywhere; }
+.entity-row em { margin-right: 6px; color: var(--control-text); font-style: normal; }
 
 @media (max-width: 360px) {
   .control-center { padding: 15px; }

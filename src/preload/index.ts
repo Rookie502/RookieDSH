@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { RookieDshConfig } from '@shared/configTypes';
+import type { Language, RookieDshConfig } from '@shared/configTypes';
 import type {
   CoreOverview,
   ControlCenterState,
@@ -20,10 +20,11 @@ import type {
 
 const api: RookieDshApi = {
   get appVersion() {
-    return '0.3.2';
+    return '0.3.3';
   },
   config: {
     get: () => ipcRenderer.invoke('config:get') as Promise<RookieDshConfig>,
+    setLanguage: (language: Language) => ipcRenderer.invoke('config:setLanguage', language) as Promise<Language>,
   },
   runtime: {
     start: () => ipcRenderer.invoke('runtime:start') as Promise<void>,

@@ -1,6 +1,6 @@
 {
   "name": "rookiedsh",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "RookieDSH - Desktop Runtime Host for DeepSeek Harness",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
