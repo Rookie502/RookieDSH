@@ -21,6 +21,14 @@ export interface FloatingConfig {
   panelWidth: number;
 }
 
+export const CONTROL_CENTER_WIDTH_DEFAULT = 420;
+export const CONTROL_CENTER_WIDTH_MIN = 320;
+export const CONTROL_CENTER_WIDTH_MAX = 600;
+
+export interface ControlCenterConfig {
+  width: number;
+}
+
 export interface HarnessConfig {
   url: string;
 }
@@ -29,5 +37,6 @@ export interface RookieDshConfig {
   runtime: RuntimeConfig;
   window: WindowConfig;
   floating: FloatingConfig;
+  controlCenter: ControlCenterConfig;
   harness: HarnessConfig;
 }

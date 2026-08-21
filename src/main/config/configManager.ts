@@ -1,7 +1,12 @@
 import { app } from 'electron';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { RookieDshConfig } from '@shared/configTypes';
+import {
+  CONTROL_CENTER_WIDTH_DEFAULT,
+  CONTROL_CENTER_WIDTH_MAX,
+  CONTROL_CENTER_WIDTH_MIN,
+  type RookieDshConfig,
+} from '@shared/configTypes';
 
 const CONFIG_FILE_NAME = 'config.json';
 
@@ -23,6 +28,9 @@ export const DEFAULT_CONFIG: RookieDshConfig = {
   floating: {
     panelWidth: 280,
   },
+  controlCenter: {
+    width: CONTROL_CENTER_WIDTH_DEFAULT,
+  },
   harness: {
     url: 'http://localhost:3080',
   },
@@ -35,6 +43,7 @@ function cloneConfig(config: RookieDshConfig): RookieDshConfig {
     runtime: { ...config.runtime },
     window: { ...config.window },
     floating: { ...config.floating },
+    controlCenter: { ...config.controlCenter },
     harness: { ...config.harness },
   };
 }
@@ -61,6 +70,15 @@ function integerValue(value: unknown, fallback: number, minimum: number): number
   return typeof value === 'number' && Number.isInteger(value) && value >= minimum ? value : fallback;
 }
 
+function boundedIntegerValue(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && value >= minimum
+    && value <= maximum
+    ? value
+    : fallback;
+}
+
 function urlValue(value: unknown, fallback: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) return fallback;
   try {
@@ -76,6 +94,7 @@ function normalizeConfig(value: unknown): RookieDshConfig {
   const runtime = isRecord(root.runtime) ? root.runtime : {};
   const window = isRecord(root.window) ? root.window : {};
   const floating = isRecord(root.floating) ? root.floating : {};
+  const controlCenter = isRecord(root.controlCenter) ? root.controlCenter : {};
   const harness = isRecord(root.harness) ? root.harness : {};
 
   return {
@@ -95,6 +114,14 @@ function normalizeConfig(value: unknown): RookieDshConfig {
     },
     floating: {
       panelWidth: integerValue(floating.panelWidth, DEFAULT_CONFIG.floating.panelWidth, 200),
+    },
+    controlCenter: {
+      width: boundedIntegerValue(
+        controlCenter.width,
+        CONTROL_CENTER_WIDTH_DEFAULT,
+        CONTROL_CENTER_WIDTH_MIN,
+        CONTROL_CENTER_WIDTH_MAX,
+      ),
     },
     harness: {
       url: urlValue(harness.url, DEFAULT_CONFIG.harness.url),

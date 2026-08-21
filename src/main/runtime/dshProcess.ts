@@ -159,7 +159,9 @@ async function clearOrphanedHarness(config: ReturnType<typeof getConfig>): Promi
 function terminateProcess(proc: ChildProcess): void {
   if (process.platform === 'win32' && proc.pid != null) {
     try {
-      spawn('taskkill.exe', ['/pid', String(proc.pid), '/t', '/f'], {
+      // Wait for the process tree kill to complete. An asynchronous taskkill
+      // can outlive Electron during startup failure and leave node dsh alive.
+      execFileSync('taskkill.exe', ['/pid', String(proc.pid), '/t', '/f'], {
         stdio: 'ignore',
         windowsHide: true,
       });

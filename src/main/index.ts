@@ -1,8 +1,37 @@
 import { app, BrowserView, BrowserWindow, ipcMain, Menu, screen } from 'electron';
 import path from 'node:path';
-import type { RookieDshConfig } from '@shared/configTypes';
-import type { FloatingPosition, ShellPage } from '@shared/types';
-import { getConfig } from './config/configManager';
+import {
+  CONTROL_CENTER_WIDTH_DEFAULT,
+  CONTROL_CENTER_WIDTH_MAX,
+  CONTROL_CENTER_WIDTH_MIN,
+  type RookieDshConfig,
+} from '@shared/configTypes';
+import type {
+  ControlCenterState,
+  FloatingPosition,
+  ShellPage,
+  TaskStatusUpdateInput,
+  WorkspaceCreateInput,
+  TaskCreateInput,
+  RunCreateInput,
+} from '@shared/types';
+import { getConfig, saveConfig } from './config/configManager';
+import {
+  createRun,
+  createTask,
+  createWorkspace,
+  deleteWorkspaceMetadata,
+  getCoreOverview,
+  getRun,
+  getTask,
+  getWorkspace,
+  listEvents,
+  listRuns,
+  listTasks,
+  listWorkspaces,
+  recordEvent,
+  updateTaskStatus,
+} from './core/services/coreService';
 import { getDiagnostics, recordRuntimeStatus } from './diagnostics/diagnosticsManager';
 import {
   cleanupDshSync,
@@ -23,11 +52,14 @@ const FLOATING_VIEW_SIZE = FLOATING_BUTTON_SIZE;
 let mainWindow: BrowserWindow | null = null;
 let harnessView: BrowserView | null = null;
 let floatingView: BrowserView | null = null;
+let controlCenterView: BrowserView | null = null;
 let harnessAttached = false;
 let floatingAttached = false;
+let controlCenterAttached = false;
 let harnessNeedsReload = true;
 let currentShellPage: ShellPage = 'harness';
-let floatingPanelOpen = false;
+let controlCenterState: ControlCenterState = 'CLOSED';
+let controlCenterWidth = CONTROL_CENTER_WIDTH_DEFAULT;
 let floatingDragTimer: NodeJS.Timeout | null = null;
 let floatingDragOrigin: {
   cursorX: number;
@@ -39,15 +71,25 @@ let floatingPosition: FloatingPosition = {
   bottom: FLOATING_EDGE_GAP,
 };
 
+function broadcastRuntimeStatus(info: ReturnType<typeof getRuntimeStatus>): void {
+  const targets = [
+    ...BrowserWindow.getAllWindows().map((win) => win.webContents),
+    floatingView?.webContents,
+    controlCenterView?.webContents,
+  ];
+  for (const contents of targets) {
+    if (contents && !contents.isDestroyed()) contents.send('runtime:statusChanged', info);
+  }
+}
+
 function updateHarnessBounds(): void {
   if (!mainWindow || mainWindow.isDestroyed() || !harnessView || harnessView.webContents.isDestroyed()) return;
 
   const { width, height } = mainWindow.getContentBounds();
-  const settingsWidth = floatingPanelOpen ? getConfig().floating.panelWidth : 0;
   harnessView.setBounds({
     x: 0,
     y: 0,
-    width: Math.max(0, width - settingsWidth),
+    width,
     height,
   });
 }
@@ -56,17 +98,6 @@ function updateFloatingBounds(): void {
   if (!mainWindow || mainWindow.isDestroyed() || !floatingView || floatingView.webContents.isDestroyed()) return;
 
   const { width, height } = mainWindow.getContentBounds();
-  if (floatingPanelOpen) {
-    const panelWidth = getConfig().floating.panelWidth;
-    floatingView.setBounds({
-      x: Math.max(0, width - panelWidth),
-      y: 0,
-      width: Math.min(panelWidth, width),
-      height,
-    });
-    return;
-  }
-
   const viewWidth = FLOATING_VIEW_SIZE;
   const viewHeight = FLOATING_VIEW_SIZE;
   floatingView.setBounds({
@@ -75,6 +106,47 @@ function updateFloatingBounds(): void {
     width: viewWidth,
     height: viewHeight,
   });
+}
+
+function updateControlCenterBounds(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || !controlCenterView || controlCenterView.webContents.isDestroyed()) return;
+  if (!controlCenterAttached || controlCenterState !== 'OPEN') return;
+
+  const { width, height } = mainWindow.getContentBounds();
+  const panelWidth = controlCenterWidth;
+  controlCenterView.setBounds({
+    x: Math.max(0, width - panelWidth),
+    y: 0,
+    width: Math.min(panelWidth, width),
+    height,
+  });
+}
+
+function clampControlCenterWidth(value: number): number {
+  return Math.min(
+    CONTROL_CENTER_WIDTH_MAX,
+    Math.max(CONTROL_CENTER_WIDTH_MIN, Math.round(value)),
+  );
+}
+
+function setControlCenterWidth(width: number, persist: boolean): number {
+  if (!Number.isFinite(width)) return controlCenterWidth;
+  const nextWidth = clampControlCenterWidth(width);
+  controlCenterWidth = nextWidth;
+
+  if (persist) {
+    const config = getConfig();
+    saveConfig({
+      ...config,
+      controlCenter: {
+        ...config.controlCenter,
+        width: nextWidth,
+      },
+    });
+  }
+
+  updateControlCenterBounds();
+  return nextWidth;
 }
 
 function bringFloatingViewToFront(): void {
@@ -95,6 +167,59 @@ function bringFloatingViewToFront(): void {
   updateFloatingBounds();
 }
 
+function bringControlCenterViewToFront(): void {
+  if (
+    !mainWindow
+    || mainWindow.isDestroyed()
+    || !controlCenterView
+    || controlCenterView.webContents.isDestroyed()
+    || controlCenterState !== 'OPEN'
+  ) return;
+
+  if (controlCenterAttached) {
+    try {
+      mainWindow.removeBrowserView(controlCenterView);
+    } catch {
+      controlCenterAttached = false;
+    }
+  }
+  try {
+    mainWindow.addBrowserView(controlCenterView);
+  } catch {
+    return;
+  }
+  controlCenterAttached = true;
+  updateControlCenterBounds();
+}
+
+function showControlCenterView(): void {
+  bringControlCenterViewToFront();
+  bringFloatingViewToFront();
+}
+
+function hideControlCenterView(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || !controlCenterView || !controlCenterAttached) return;
+  try {
+    mainWindow.removeBrowserView(controlCenterView);
+  } catch {
+    // The BrowserView may already be detached during window teardown.
+  }
+  controlCenterAttached = false;
+}
+
+function setControlCenterState(nextState: ControlCenterState): void {
+  if (controlCenterState === nextState) return;
+  controlCenterState = nextState;
+
+  if (nextState === 'OPEN') showControlCenterView();
+  else hideControlCenterView();
+
+  const targets = [floatingView?.webContents, controlCenterView?.webContents];
+  for (const contents of targets) {
+    if (contents && !contents.isDestroyed()) contents.send('shell:controlCenterStateChanged', controlCenterState);
+  }
+}
+
 function showHarnessView(): void {
   if (!mainWindow || mainWindow.isDestroyed() || !harnessView || harnessView.webContents.isDestroyed()) return;
   if (harnessNeedsReload) {
@@ -112,6 +237,7 @@ function showHarnessView(): void {
   }
   harnessAttached = true;
   updateHarnessBounds();
+  if (controlCenterState === 'OPEN') bringControlCenterViewToFront();
   bringFloatingViewToFront();
 }
 
@@ -161,8 +287,10 @@ function disposeEmbeddedViews(): void {
   if (!win || win.isDestroyed()) {
     harnessView = null;
     floatingView = null;
+    controlCenterView = null;
     harnessAttached = false;
     floatingAttached = false;
+    controlCenterAttached = false;
     return;
   }
 
@@ -188,6 +316,18 @@ function disposeEmbeddedViews(): void {
     }
     floatingAttached = false;
     floatingView = null;
+  }
+  if (controlCenterView) {
+    if (!controlCenterView.webContents.isDestroyed()) controlCenterView.webContents.stop();
+    if (controlCenterAttached) {
+      try {
+        win.removeBrowserView(controlCenterView);
+      } catch {
+        // The BrowserView may already be detached during window teardown.
+      }
+    }
+    controlCenterAttached = false;
+    controlCenterView = null;
   }
   harnessView = null;
 }
@@ -241,7 +381,36 @@ function createFloatingView(win: BrowserWindow): BrowserView {
   return view;
 }
 
+function createControlCenterView(win: BrowserWindow): BrowserView {
+  const view = new BrowserView({
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  controlCenterView = view;
+  // Keep the overlay detached until Main toggles it open. This is explicit
+  // because BrowserView attachment is a window concern, not a renderer concern.
+  try {
+    win.removeBrowserView(view);
+  } catch {
+    // A newly created view is normally already detached.
+  }
+  const controlCenterPage = isDev
+    ? view.webContents.loadURL(`${DEV_SERVER_URL}/controlCenter.html`)
+    : view.webContents.loadFile(path.join(__dirname, '../renderer/controlCenter.html'));
+  controlCenterPage.catch((error: unknown) => {
+    console.error('Control Center load failed:', error);
+  });
+  return view;
+}
+
 function createMainWindow(config: RookieDshConfig): BrowserWindow {
+  controlCenterWidth = clampControlCenterWidth(config.controlCenter.width);
   const win = new BrowserWindow({
     width: config.window.width,
     height: config.window.height,
@@ -259,11 +428,13 @@ function createMainWindow(config: RookieDshConfig): BrowserWindow {
 
   mainWindow = win;
   createFloatingView(win);
+  createControlCenterView(win);
   win.webContents.on('did-finish-load', () => {
     console.log(`ROOKIE_DSH_METRIC electron-ready-ms=${Date.now() - STARTUP_STARTED_AT}`);
   });
   win.on('resize', () => {
     updateHarnessBounds();
+    updateControlCenterBounds();
     updateFloatingBounds();
   });
 
@@ -292,6 +463,20 @@ ipcMain.handle('runtime:getStatus', () => getRuntimeStatus());
 ipcMain.handle('runtime:getLogs', () => getRuntimeLogs());
 ipcMain.handle('runtime:getDiagnostics', () => getDiagnostics());
 ipcMain.handle('config:get', () => getConfig());
+
+ipcMain.handle('core:overview', () => getCoreOverview());
+ipcMain.handle('workspace:create', (_event, input: WorkspaceCreateInput) => createWorkspace(input));
+ipcMain.handle('workspace:list', () => listWorkspaces());
+ipcMain.handle('workspace:get', (_event, id: string) => getWorkspace(id));
+ipcMain.handle('workspace:deleteMetadata', (_event, id: string) => deleteWorkspaceMetadata(id));
+ipcMain.handle('task:create', (_event, input: TaskCreateInput) => createTask(input));
+ipcMain.handle('task:list', (_event, workspaceId?: string) => listTasks(workspaceId));
+ipcMain.handle('task:get', (_event, id: string) => getTask(id));
+ipcMain.handle('task:updateStatus', (_event, id: string, input: TaskStatusUpdateInput) => updateTaskStatus(id, input.status));
+ipcMain.handle('run:create', (_event, input: RunCreateInput) => createRun(input));
+ipcMain.handle('run:list', (_event, taskId?: string) => listRuns(taskId));
+ipcMain.handle('run:get', (_event, id: string) => getRun(id));
+ipcMain.handle('event:list', (_event, limit?: number) => listEvents(limit));
 
 ipcMain.on('shell:setPage', (_event, page: ShellPage) => {
   currentShellPage = page;
@@ -331,17 +516,41 @@ ipcMain.on('shell:endFloatingDrag', () => {
   stopFloatingDrag();
 });
 
-ipcMain.on('shell:setFloatingPanelOpen', (_event, open: boolean) => {
-  floatingPanelOpen = open;
-  updateHarnessBounds();
-  updateFloatingBounds();
+ipcMain.on('shell:toggleControlCenter', () => {
+  setControlCenterState(controlCenterState === 'OPEN' ? 'CLOSED' : 'OPEN');
 });
+
+ipcMain.handle('shell:getControlCenterState', () => controlCenterState);
+ipcMain.on('shell:setControlCenterWidth', (_event, width: number) => {
+  setControlCenterWidth(width, false);
+});
+ipcMain.handle('shell:saveControlCenterWidth', (_event, width: number) => (
+  setControlCenterWidth(width, true)
+));
+
+let lastProjectedRuntimeStatus: string | null = null;
 
 onDshStatusChanged((info) => {
   recordRuntimeStatus(info);
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send('runtime:statusChanged', info);
+  if (lastProjectedRuntimeStatus !== info.status) {
+    lastProjectedRuntimeStatus = info.status;
+    try {
+      recordEvent({
+        source: 'runtime',
+        type: 'runtime.statusChanged',
+        payload: {
+          status: info.status,
+          pid: info.pid,
+          url: info.url,
+          error: info.error,
+        },
+        nativeId: info.pid ? String(info.pid) : undefined,
+      });
+    } catch (error) {
+      console.warn(`RookieDSH: failed to persist runtime event (${String(error)}).`);
+    }
   }
+  broadcastRuntimeStatus(info);
 
   if (info.status === 'RUNNING' && currentShellPage === 'harness') showHarnessView();
   if (info.status === 'STOPPED' || info.status === 'FAILED') {

@@ -18,6 +18,7 @@ export default function ConfigCard({ config }: { config: RookieDshConfig | null 
           <ConfigValue label="Command" value={config.runtime.command} />
           <ConfigValue label="Port" value={String(config.runtime.port)} />
           <ConfigValue label="Auto Start" value={String(config.runtime.autoStart)} />
+          <ConfigValue label="Control Center" value={`${config.controlCenter.width}px`} />
         </div>
       )}
     </article>

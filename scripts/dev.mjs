@@ -43,7 +43,7 @@ let shuttingDown = false;
 const buildProcesses = new Set();
 
 function terminate(child) {
-  if (!child || child.exitCode !== null || child.killed) return;
+  if (!child || child.exitCode !== null) return;
 
   if (process.platform === 'win32' && child.pid) {
     spawnSync('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
@@ -60,11 +60,32 @@ function shutdown(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  terminate(electronProcess);
-  terminate(viteProcess);
-  for (const buildProcess of buildProcesses) terminate(buildProcess);
+  const finish = () => {
+    terminate(viteProcess);
+    for (const buildProcess of buildProcesses) terminate(buildProcess);
+    setTimeout(() => process.exit(code), 0);
+  };
 
-  setTimeout(() => process.exit(code), 0);
+  if (electronProcess && electronProcess.exitCode === null) {
+    // Let Electron run before-quit so the Harness process tree is cleaned up.
+    // Force-killing Electron first can orphan dsh.cmd's node child on Windows.
+    try {
+      electronProcess.kill('SIGINT');
+    } catch {
+      terminate(electronProcess);
+    }
+    const forceTimer = setTimeout(() => {
+      terminate(electronProcess);
+      finish();
+    }, 8_000);
+    electronProcess.once('close', () => {
+      clearTimeout(forceTimer);
+      finish();
+    });
+    return;
+  }
+
+  finish();
 }
 
 function runBuild(entryPoint, outfile) {

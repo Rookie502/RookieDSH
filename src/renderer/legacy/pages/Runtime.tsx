@@ -10,6 +10,7 @@ const INITIAL_INFO: RuntimeInfo = {
   startedAt: null,
 };
 
+/** Archived page kept as a compatibility fallback. Control Center is the active UI. */
 export default function Runtime() {
   const [info, setInfo] = useState<RuntimeInfo>(INITIAL_INFO);
   const [logs, setLogs] = useState<RuntimeLogEntry[]>([]);
@@ -99,12 +100,8 @@ export default function Runtime() {
         <p><strong>Uptime:</strong> {uptime}</p>
         {latestError && <p style={{ color: 'crimson' }}><strong>Latest error:</strong> {latestError}</p>}
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-          <button onClick={handleRestart} disabled={!canRestart}>
-            Restart Runtime
-          </button>
-          <button onClick={handleStop} disabled={!canStop}>
-            Stop Runtime
-          </button>
+          <button onClick={handleRestart} disabled={!canRestart}>Restart Runtime</button>
+          <button onClick={handleStop} disabled={!canStop}>Stop Runtime</button>
         </div>
         <div style={{ marginTop: '1rem' }}>
           <strong>Recent logs</strong>
@@ -128,7 +125,5 @@ function formatUptime(milliseconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  return hours > 0
-    ? `${hours}h ${minutes}m ${seconds}s`
-    : `${minutes}m ${seconds}s`;
+  return hours > 0 ? `${hours}h ${minutes}m ${seconds}s` : `${minutes}m ${seconds}s`;
 }
