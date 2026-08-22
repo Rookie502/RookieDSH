@@ -4,6 +4,7 @@ export type {
   RuntimeInfo,
   RuntimeLogEntry,
   RuntimeLogStream,
+  RuntimeReadiness,
   RuntimeStatus,
 } from '@shared/types';
 
@@ -18,6 +19,7 @@ export type RuntimeStatusListener = (info: RuntimeInfo) => void;
 
 export const INITIAL_RUNTIME_INFO: RuntimeInfo = {
   status: 'STOPPED',
+  readiness: 'NOT_STARTED',
   pid: null,
   url: null,
   error: null,

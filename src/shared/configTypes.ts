@@ -6,7 +6,12 @@ export interface RuntimeConfig {
   fallbackCommand: string;
   port: number;
   autoStart: boolean;
+  /** Canonical normal runtime startup readiness timeout in milliseconds. */
+  startTimeout: number;
+  /** Legacy alias retained when reading older config.json files. */
   startupTimeout: number;
+  /** Longer readiness timeout used after a controlled runtime update. */
+  updateRestartTimeout: number;
   shutdownTimeout: number;
   maxLogEntries: number;
   maxLogMessageLength: number;
@@ -35,6 +40,13 @@ export interface HarnessConfig {
   url: string;
 }
 
+export type UpdateCheckFrequency = 'daily' | 'weekly' | 'manual';
+
+export interface UpdateConfig {
+  autoCheck: boolean;
+  checkFrequency: UpdateCheckFrequency;
+}
+
 export interface RookieDshConfig {
   language: Language;
   runtime: RuntimeConfig;
@@ -42,4 +54,5 @@ export interface RookieDshConfig {
   floating: FloatingConfig;
   controlCenter: ControlCenterConfig;
   harness: HarnessConfig;
+  updates: UpdateConfig;
 }

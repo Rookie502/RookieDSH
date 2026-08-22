@@ -85,6 +85,27 @@ export function resolveDeepSeekHarnessLaunchSpec(config: RookieDshConfig): Runti
   };
 }
 
+/** Resolve the same provider command for a non-mutating version query. */
+export function resolveDeepSeekHarnessVersionSpec(config: RookieDshConfig): RuntimeLaunchSpec {
+  const launchSpec = resolveDeepSeekHarnessLaunchSpec(config);
+  if (launchSpec.label.includes('fallback')) {
+    return {
+      ...launchSpec,
+      args: ['--yes', '@deepseek-ai/dsh', '--version'],
+      label: `${launchSpec.label} version query`,
+    };
+  }
+
+  const webIndex = launchSpec.args.indexOf('web');
+  return {
+    ...launchSpec,
+    args: webIndex >= 0
+      ? [...launchSpec.args.slice(0, webIndex), '--version']
+      : ['--version'],
+    label: `${launchSpec.label} version query`,
+  };
+}
+
 export function detectDeepSeekHarness(config: RookieDshConfig): boolean {
   const configuredCommand = config.runtime.command.trim() || 'dsh';
   if (process.platform === 'win32') {

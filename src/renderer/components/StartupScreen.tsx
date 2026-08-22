@@ -5,6 +5,7 @@ import { detectSystemLanguage, setLanguage as setLocale, t } from '../i18n';
 
 const INITIAL_INFO: RuntimeInfo = {
   status: 'STARTING',
+  readiness: 'NOT_STARTED',
   pid: null,
   url: null,
   error: null,
@@ -66,7 +67,7 @@ export default function StartupScreen() {
   }, [info.status]);
 
   async function retry() {
-    setInfo((current) => ({ ...current, status: 'STARTING', error: null }));
+    setInfo((current) => ({ ...current, status: 'STARTING', readiness: 'NOT_STARTED', error: null }));
     try {
       await window.rookiedsh?.runtime.start();
     } catch (error) {
@@ -96,14 +97,10 @@ export default function StartupScreen() {
         )}
         <div className="startup-steps">
           <StartupStep label={t('startup.electronReady')} state="done" />
-          <StartupStep
-            label={t('startup.startingHarness')}
-            state={isFailed ? 'failed' : isStopped ? 'pending' : info.status === 'STARTING' ? 'active' : 'done'}
-          />
-          <StartupStep
-            label={t('startup.connectingRuntime')}
-            state={isFailed ? 'failed' : isStopped ? 'pending' : info.status === 'STARTING' ? 'active' : 'pending'}
-          />
+          <StartupStep label={t('startup.processRunning')} state={readinessState(info, 'PROCESS_RUNNING')} />
+          <StartupStep label={t('startup.portReady')} state={readinessState(info, 'PORT_READY')} />
+          <StartupStep label={t('startup.webReady')} state={readinessState(info, 'WEB_READY')} />
+          <StartupStep label={t('startup.pageReady')} state={readinessState(info, 'PAGE_READY')} />
         </div>
         {isStopped && <p className="startup-detail">{t('startup.automaticStartupDisabled')}</p>}
         {(isFailed || isStopped) && (
@@ -128,3 +125,13 @@ function StartupStep({ label, state }: { label: string; state: StepState }) {
 }
 
 type StepState = 'pending' | 'active' | 'done' | 'failed';
+
+function readinessState(info: RuntimeInfo, phase: RuntimeInfo['readiness']): StepState {
+  if (info.status === 'FAILED') return phase === info.readiness ? 'failed' : phaseRank(phase) <= phaseRank(info.readiness) ? 'done' : 'pending';
+  if (phaseRank(info.readiness) >= phaseRank(phase)) return 'done';
+  return info.status === 'STARTING' && phaseRank(phase) === phaseRank(info.readiness) + 1 ? 'active' : 'pending';
+}
+
+function phaseRank(phase: RuntimeInfo['readiness']): number {
+  return ['NOT_STARTED', 'PROCESS_RUNNING', 'PORT_READY', 'WEB_READY', 'PAGE_READY'].indexOf(phase);
+}

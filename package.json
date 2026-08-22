@@ -1,12 +1,16 @@
 {
   "name": "rookiedsh",
-  "version": "0.3.3",
+  "version": "0.5.2",
   "description": "RookieDSH - Desktop Runtime Host for DeepSeek Harness",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
     "typecheck": "tsc --noEmit",
     "build": "node ./scripts/build.mjs",
-    "core:test": "node ./scripts/core-smoke.mjs"
+    "core:test": "node ./scripts/core-smoke.mjs",
+    "update:test": "node ./scripts/update-smoke.mjs",
+    "resource:test": "node ./scripts/resource-smoke.mjs",
+    "update:recovery:test": "node ./scripts/update-recovery-smoke.mjs",
+    "runtime:readiness:test": "node ./scripts/runtime-readiness-smoke.mjs"
   },
   "author": "rookie502",
   "license": "UNLICENSED",

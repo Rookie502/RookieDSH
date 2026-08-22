@@ -4,6 +4,7 @@ import type { RuntimeInfo, RuntimeLogEntry } from '@shared/types';
 
 const INITIAL_INFO: RuntimeInfo = {
   status: 'STOPPED',
+  readiness: 'NOT_STARTED',
   pid: null,
   url: null,
   error: null,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { Workspace, WorkspaceCreateInput } from '@shared/coreTypes';
-import { createWorkspaceRecord, deleteWorkspaceRecord } from '../store/coreOperations';
+import type { Workspace, WorkspaceBindingInput, WorkspaceCreateInput } from '@shared/coreTypes';
+import { bindWorkspaceRecord, createWorkspaceRecord, deleteWorkspaceRecord } from '../store/coreOperations';
 import { getCoreSnapshot, updateCoreSnapshot } from '../store/coreStore';
 
 export function listWorkspaces(): Workspace[] {
@@ -27,4 +27,13 @@ export function deleteWorkspaceMetadata(id: string): boolean {
     deleted = deleteWorkspaceRecord(database, id);
   });
   return deleted;
+}
+
+export function bindWorkspace(id: string, input: WorkspaceBindingInput): Workspace {
+  let updated: Workspace | null = null;
+  updateCoreSnapshot((database) => {
+    updated = bindWorkspaceRecord(database, id, input, new Date().toISOString());
+  });
+  if (!updated) throw new Error('Workspace binding did not produce a record.');
+  return updated;
 }

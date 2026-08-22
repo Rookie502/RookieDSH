@@ -1,5 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import http from 'node:http';
+import net from 'node:net';
 import { getConfig } from '../config/configManager';
 import {
   INITIAL_RUNTIME_INFO,
@@ -27,6 +28,11 @@ let stopRequested = false;
 const logs: RuntimeLogEntry[] = [];
 const listeners = new Set<RuntimeStatusListener>();
 let logNotifyTimer: NodeJS.Timeout | null = null;
+
+export interface RuntimeStartOptions {
+  timeoutMs?: number;
+  reason?: 'normal' | 'update-restart';
+}
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -117,6 +123,30 @@ function probeRuntime(url: string): Promise<boolean> {
   });
 }
 
+function probePort(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      resolve(false);
+      return;
+    }
+    const socket = net.createConnection({
+      host: parsed.hostname,
+      port: Number(parsed.port) || (parsed.protocol === 'https:' ? 443 : 80),
+    });
+    const finish = (ready: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ready);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.setTimeout(750, () => finish(false));
+  });
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -124,7 +154,9 @@ function delay(ms: number): Promise<void> {
 async function waitForPortFree(url: string, port: number, timeout: number): Promise<void> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (!(await probeRuntime(url))) return;
+    const responsive = await probeRuntime(url);
+    const listening = process.platform === 'win32' && getRuntimePortOwner(port) != null;
+    if (!responsive && !listening) return;
     await delay(POLL_INTERVAL_MS);
   }
 
@@ -134,9 +166,9 @@ async function waitForPortFree(url: string, port: number, timeout: number): Prom
 async function clearOrphanedHarness(config: ReturnType<typeof getConfig>): Promise<void> {
   const { port, shutdownTimeout } = config.runtime;
   const { url } = config.harness;
-  if (!(await probeRuntime(url))) return;
-
   const owner = getRuntimePortOwner(port);
+  const responsive = await probeRuntime(url);
+  if (!responsive && !owner) return;
   if (!owner) {
     throw new Error(`Runtime port ${port} is already in use`);
   }
@@ -177,8 +209,16 @@ function terminateProcess(proc: ChildProcess): void {
   }
 }
 
-async function waitForReady(proc: ChildProcess, config: ReturnType<typeof getConfig>): Promise<void> {
-  const deadline = Date.now() + config.runtime.startupTimeout;
+export function resolveRuntimeStartTimeout(config: ReturnType<typeof getConfig>, options: RuntimeStartOptions = {}): number {
+  return options.timeoutMs ?? config.runtime.startTimeout;
+}
+
+export function isRuntimeReadinessTimedOut(startedAt: number, now: number, timeoutMs: number): boolean {
+  return now - startedAt >= timeoutMs;
+}
+
+async function waitForReady(proc: ChildProcess, config: ReturnType<typeof getConfig>, timeoutMs = resolveRuntimeStartTimeout(config)): Promise<void> {
+  const startedAt = Date.now();
   let processError: Error | null = null;
   let processExited = false;
   let exitCode: number | null = null;
@@ -197,12 +237,22 @@ async function waitForReady(proc: ChildProcess, config: ReturnType<typeof getCon
   proc.once('exit', onExit);
 
   try {
-    while (Date.now() < deadline) {
+    let portReady = info.readiness === 'PORT_READY' || info.readiness === 'WEB_READY' || info.readiness === 'PAGE_READY';
+    while (!isRuntimeReadinessTimedOut(startedAt, Date.now(), timeoutMs)) {
       if (processError) throw processError;
       if (processExited) {
         throw new Error(`Harness process exited before becoming ready (code=${exitCode ?? 'none'}, signal=${exitSignal ?? 'none'})`);
       }
-      if (await probeRuntime(config.harness.url)) {
+      if (!portReady && await probePort(config.harness.url)) {
+        portReady = true;
+        setInfo({ readiness: 'PORT_READY' });
+        appendLog('system', 'Harness port is listening.');
+      }
+      if (portReady && await probeRuntime(config.harness.url)) {
+        if (info.readiness !== 'WEB_READY' && info.readiness !== 'PAGE_READY') {
+          setInfo({ readiness: 'WEB_READY' });
+          appendLog('system', 'Harness web endpoint is ready.');
+        }
         await delay(100);
         if (processError) throw processError;
         if (processExited) {
@@ -213,7 +263,7 @@ async function waitForReady(proc: ChildProcess, config: ReturnType<typeof getCon
       await delay(POLL_INTERVAL_MS);
     }
 
-    throw new Error(`Harness start timed out after ${config.runtime.startupTimeout / 1000}s`);
+    throw new Error(`Harness start timed out after ${timeoutMs / 1000}s`);
   } finally {
     proc.removeListener('error', onError);
     proc.removeListener('exit', onExit);
@@ -232,7 +282,7 @@ function attachProcessListeners(proc: ChildProcess): void {
       setInfo({ ...INITIAL_INFO });
       stopRequested = false;
     } else if (info.status === 'STARTING' || info.status === 'RUNNING') {
-      setInfo({ status: 'FAILED', pid: null, url: null, error: error.message });
+      setInfo({ status: 'FAILED', readiness: 'NOT_STARTED', pid: null, url: null, error: error.message });
     }
   });
 
@@ -249,7 +299,7 @@ function attachProcessListeners(proc: ChildProcess): void {
     if (info.status === 'STARTING' || info.status === 'RUNNING') {
       const message = `Harness process exited unexpectedly (code=${code ?? 'none'}, signal=${signal ?? 'none'})`;
       appendLog('system', message);
-      setInfo({ status: 'FAILED', pid: null, url: null, error: message });
+      setInfo({ status: 'FAILED', readiness: 'NOT_STARTED', pid: null, url: null, error: message });
     }
   });
 }
@@ -266,19 +316,19 @@ export function onDshStatusChanged(listener: RuntimeStatusListener): () => void 
 }
 
 /** Start the Harness web server. Resolves when the health endpoint is reachable. */
-export function startDsh(): Promise<void> {
+export function startDsh(options: RuntimeStartOptions = {}): Promise<void> {
   if (startPromise) return startPromise;
   if (info.status === 'STOPPING') return Promise.reject(new Error('Harness is stopping'));
   if (child || info.status === 'RUNNING') return Promise.resolve();
 
   stopRequested = false;
-  startPromise = startDshInternal().finally(() => {
+  startPromise = startDshInternal(options).finally(() => {
     startPromise = null;
   });
   return startPromise;
 }
 
-async function startDshInternal(): Promise<void> {
+async function startDshInternal(options: RuntimeStartOptions): Promise<void> {
   setInfo({ ...INITIAL_INFO, status: 'STARTING' });
 
   const config = getConfig();
@@ -294,8 +344,10 @@ async function startDshInternal(): Promise<void> {
     });
     child = proc;
     attachProcessListeners(proc);
+    setInfo({ readiness: 'PROCESS_RUNNING', pid: proc.pid ?? null });
+    appendLog('system', 'Harness process started.');
 
-    await waitForReady(proc, config);
+    await waitForReady(proc, config, options.timeoutMs);
 
     if (child !== proc || info.status !== 'STARTING') {
       throw new Error('Harness start was cancelled');
@@ -316,7 +368,7 @@ async function startDshInternal(): Promise<void> {
         terminateProcess(child);
         child = null;
       }
-      setInfo({ status: 'FAILED', pid: null, url: null, error: message });
+      setInfo({ status: 'FAILED', readiness: 'NOT_STARTED', pid: null, url: null, error: message });
       appendLog('system', `Harness failed to start: ${message}`);
     }
     throw error instanceof Error ? error : new Error(message);
@@ -370,27 +422,47 @@ export function stopDsh(): Promise<void> {
   return stopPromise;
 }
 
+/** Mark the BrowserView document as ready after the runtime HTTP endpoint is ready. */
+export function markDshPageReady(): void {
+  if (info.status === 'RUNNING' && (info.readiness === 'WEB_READY' || info.readiness === 'PAGE_READY')) {
+    setInfo({ readiness: 'PAGE_READY' });
+  }
+}
+
 /** Best-effort synchronous fallback for abrupt Electron process termination. */
 export function cleanupDshSync(): void {
   if (logNotifyTimer) clearTimeout(logNotifyTimer);
   logNotifyTimer = null;
 
   const proc = child;
-  if (!proc) return;
-
-  child = null;
-  stopRequested = false;
-  if (process.platform === 'win32' && proc.pid != null) {
+  if (proc) {
+    child = null;
+    stopRequested = false;
+    if (process.platform === 'win32' && proc.pid != null) {
+      try {
+        execFileSync('taskkill.exe', ['/pid', String(proc.pid), '/t', '/f'], { stdio: 'ignore' });
+      } catch {
+        // The process may already have exited.
+      }
+    }
     try {
-      execFileSync('taskkill.exe', ['/pid', String(proc.pid), '/t', '/f'], { stdio: 'ignore' });
+      proc.kill();
     } catch {
       // The process may already have exited.
     }
   }
-  try {
-    proc.kill();
-  } catch {
-    // The process may already have exited.
+
+  // On Windows, spawning dsh.cmd with shell=true can report the cmd wrapper
+  // as exited while the node-based Harness child is still listening. Recheck
+  // the configured port during the synchronous exit fallback and terminate
+  // only a verified DeepSeek Harness owner.
+  const owner = getRuntimePortOwner(getConfig().runtime.port);
+  if (owner && isDeepSeekHarnessCommand(owner.commandLine)) {
+    try {
+      execFileSync('taskkill.exe', ['/pid', String(owner.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true });
+    } catch {
+      // The orphan may have exited between the port lookup and taskkill.
+    }
   }
 }
 

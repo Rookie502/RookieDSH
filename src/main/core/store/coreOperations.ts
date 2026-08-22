@@ -8,6 +8,7 @@ import type {
   TaskCreateInput,
   TaskStatus,
   Workspace,
+  WorkspaceBindingInput,
   WorkspaceCreateInput,
 } from '@shared/coreTypes';
 import type { CoreDatabaseDocument } from '../types/coreTypes';
@@ -44,6 +45,28 @@ export function deleteWorkspaceRecord(database: CoreDatabaseDocument, id: string
   if (index < 0) return false;
   database.workspaces.splice(index, 1);
   return true;
+}
+
+export function bindWorkspaceRecord(
+  database: CoreDatabaseDocument,
+  id: string,
+  input: WorkspaceBindingInput,
+  timestamp: string,
+): Workspace {
+  const workspace = database.workspaces.find((candidate) => candidate.id === id);
+  if (!workspace) throw new Error(`Workspace not found: ${id}`);
+  if (input.runtimeId !== undefined && input.runtimeId !== null
+    && !database.runtimeInstances.some((runtime) => runtime.id === input.runtimeId)) {
+    throw new Error(`Runtime not found: ${input.runtimeId}`);
+  }
+  if (input.modelEndpointId !== undefined && input.modelEndpointId !== null
+    && !database.modelEndpoints.some((endpoint) => endpoint.id === input.modelEndpointId)) {
+    throw new Error(`Model endpoint not found: ${input.modelEndpointId}`);
+  }
+  if (input.runtimeId !== undefined) workspace.runtimeId = input.runtimeId;
+  if (input.modelEndpointId !== undefined) workspace.modelEndpointId = input.modelEndpointId;
+  workspace.updatedAt = timestamp;
+  return workspace;
 }
 
 export function createTaskRecord(

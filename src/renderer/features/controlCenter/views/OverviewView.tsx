@@ -13,9 +13,30 @@ interface OverviewViewProps {
   logs: RuntimeLogEntry[];
   config: RookieDshConfig | null;
   now: number;
+  runtimeCount: number;
+  modelEndpointCount: number;
+  onlineModelEndpointCount: number;
+  updateAvailable: boolean;
+  providerCount: number;
+  bindingCount: number;
+  providerSyncHealthy: boolean | null;
 }
 
-export default function OverviewView({ overview, info, diagnostics, logs, config, now }: OverviewViewProps) {
+export default function OverviewView({
+  overview,
+  info,
+  diagnostics,
+  logs,
+  config,
+  now,
+  runtimeCount,
+  modelEndpointCount,
+  onlineModelEndpointCount,
+  updateAvailable,
+  providerCount,
+  bindingCount,
+  providerSyncHealthy,
+}: OverviewViewProps) {
   const uptime = info.startedAt && info.status === 'RUNNING'
     ? formatDuration(Math.max(0, now - Date.parse(info.startedAt)))
     : t('common.notAvailable');
@@ -23,6 +44,18 @@ export default function OverviewView({ overview, info, diagnostics, logs, config
   return (
     <div className="control-center-view-stack">
       <CoreOverviewCard overview={overview} />
+      <article className="control-card">
+        <div className="card-kicker">{t('overview.eyebrow')}</div>
+        <h2>{t('overview.title')}</h2>
+        <div className="core-metrics">
+          <Metric label={t('overview.runtimeCount')} value={runtimeCount} />
+          <Metric label={t('overview.modelEndpointCount')} value={`${onlineModelEndpointCount} / ${modelEndpointCount}`} />
+          <Metric label={t('overview.providerCount')} value={providerCount} />
+          <Metric label={t('overview.bindingCount')} value={bindingCount} />
+          <Metric label={t('overview.updateAvailable')} value={updateAvailable ? t('updates.updateAvailable') : t('overview.noUpdate')} />
+          <Metric label={t('overview.providerSync')} value={providerSyncHealthy === null ? t('common.notAvailable') : providerSyncHealthy ? t('overview.healthy') : t('overview.driftDetected')} />
+        </div>
+      </article>
       <article className="control-card overview-runtime-card">
         <div className="card-heading">
           <div>

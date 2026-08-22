@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserView, BrowserWindow, dialog, ipcMain, Menu, screen, type MessageBoxOptions } from 'electron';
 import path from 'node:path';
 import {
   CONTROL_CENTER_WIDTH_DEFAULT,
@@ -6,18 +6,23 @@ import {
   CONTROL_CENTER_WIDTH_MIN,
   type Language,
   type RookieDshConfig,
+  type UpdateConfig,
 } from '@shared/configTypes';
 import type {
   ControlCenterState,
   FloatingPosition,
+  ModelEndpointInput,
   ShellPage,
   TaskStatusUpdateInput,
+  WorkspaceBindingInput,
   WorkspaceCreateInput,
   TaskCreateInput,
   RunCreateInput,
+  RuntimeBindingInput,
 } from '@shared/types';
 import { getConfig, saveConfig } from './config/configManager';
 import {
+  bindWorkspace,
   createRun,
   createTask,
   createWorkspace,
@@ -35,13 +40,26 @@ import {
 } from './core/services/coreService';
 import { getDiagnostics, recordRuntimeStatus } from './diagnostics/diagnosticsManager';
 import {
+  addModelEndpoint,
+  checkModelEndpoint,
+  discoverModelEndpoint,
+  listModelEndpoints,
+  removeModelEndpoint,
+} from './models/ModelRegistry';
+import {
   cleanupDshSync,
   getRuntimeLogs,
   getRuntimeStatus,
+  markRuntimePageReady,
   onDshStatusChanged,
   startRuntime,
   stopRuntime,
 } from './runtime/RuntimeManager';
+import { checkDeepSeekHarnessVersion, listRuntimeInstances, syncDeepSeekHarnessRuntime } from './runtime/RuntimeRegistry';
+import { DeepSeekHarnessAdapter } from './runtime/adapters/DeepSeekHarnessAdapter';
+import { DshProviderBridge } from './runtime/dsh/DshProviderBridge';
+import { UpdateExecutor } from './updates/UpdateExecutor';
+import { checkForUpdates, getUpdateStatus } from './updates/updateManager';
 
 const isDev = !app.isPackaged;
 const DEV_SERVER_URL = process.env.ROOKIE_DSH_DEV_SERVER_URL ?? 'http://localhost:5173';
@@ -72,6 +90,32 @@ let floatingPosition: FloatingPosition = {
   bottom: FLOATING_EDGE_GAP,
 };
 
+const runtimeUpdateExecutor = new UpdateExecutor({
+  requestConfirmation: async (check) => {
+    const parent = mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow
+      : BrowserWindow.getFocusedWindow() ?? undefined;
+    const options: MessageBoxOptions = {
+      type: 'warning',
+      title: 'Update DeepSeek Harness',
+      message: 'A DeepSeek Harness runtime update is available.',
+      detail: `Installed: ${check.installedVersion ?? 'unknown'}\nLatest: ${check.latestVersion ?? 'unknown'}\n\nRookieDSH will stop the runtime, back up the current package, install the update, verify it and restart the runtime.`,
+      buttons: ['Update Runtime', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    };
+    const result = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    return result.response === 0;
+  },
+  onProgress: (progress) => broadcastUpdateProgress(progress),
+});
+
+const dshProviderBridge = new DshProviderBridge();
+const deepSeekHarnessAdapter = new DeepSeekHarnessAdapter(dshProviderBridge);
+
 function broadcastRuntimeStatus(info: ReturnType<typeof getRuntimeStatus>): void {
   const targets = [
     ...BrowserWindow.getAllWindows().map((win) => win.webContents),
@@ -80,6 +124,17 @@ function broadcastRuntimeStatus(info: ReturnType<typeof getRuntimeStatus>): void
   ];
   for (const contents of targets) {
     if (contents && !contents.isDestroyed()) contents.send('runtime:statusChanged', info);
+  }
+}
+
+function broadcastUpdateProgress(progress: ReturnType<typeof runtimeUpdateExecutor.getProgress>): void {
+  const targets = [
+    ...BrowserWindow.getAllWindows().map((win) => win.webContents),
+    floatingView?.webContents,
+    controlCenterView?.webContents,
+  ];
+  for (const contents of targets) {
+    if (contents && !contents.isDestroyed()) contents.send('updates:progressChanged', progress);
   }
 }
 
@@ -353,6 +408,7 @@ function createHarnessView(): BrowserView {
     console.error(`Harness UI failed to load (${errorCode}): ${errorDescription}`);
   });
   view.webContents.on('did-finish-load', () => {
+    markRuntimePageReady();
     console.log(`ROOKIE_DSH_METRIC harness-ready-ms=${Date.now() - STARTUP_STARTED_AT}`);
   });
   harnessView = view;
@@ -453,27 +509,63 @@ function createMainWindow(config: RookieDshConfig): BrowserWindow {
 }
 
 ipcMain.handle('runtime:start', async () => {
-  await startRuntime();
+  await deepSeekHarnessAdapter.start();
 });
 
 ipcMain.handle('runtime:stop', async () => {
-  await stopRuntime();
+  await deepSeekHarnessAdapter.stop();
 });
 
-ipcMain.handle('runtime:getStatus', () => getRuntimeStatus());
+ipcMain.handle('runtime:getStatus', () => deepSeekHarnessAdapter.getStatus());
 ipcMain.handle('runtime:getLogs', () => getRuntimeLogs());
 ipcMain.handle('runtime:getDiagnostics', () => getDiagnostics());
+ipcMain.handle('runtime:getCapabilities', () => deepSeekHarnessAdapter.getCapabilities());
 ipcMain.handle('config:get', () => getConfig());
 ipcMain.handle('config:setLanguage', (_event, language: Language) => {
   const config = getConfig();
   return saveConfig({ ...config, language }).language;
 });
+ipcMain.handle('config:setUpdatePreferences', (_event, updates: UpdateConfig) => {
+  const config = getConfig();
+  return saveConfig({ ...config, updates }).updates;
+});
+
+ipcMain.handle('models:list', () => listModelEndpoints());
+ipcMain.handle('models:add', (_event, input: ModelEndpointInput) => addModelEndpoint(input));
+ipcMain.handle('models:remove', (_event, id: string) => removeModelEndpoint(id));
+ipcMain.handle('models:check', (_event, id: string) => checkModelEndpoint(id));
+ipcMain.handle('models:discover', (_event, id: string) => discoverModelEndpoint(id));
+ipcMain.handle('runtime:list', () => listRuntimeInstances());
+ipcMain.handle('runtime:checkVersion', async () => {
+  const result = await checkDeepSeekHarnessVersion();
+  if (result.installedVersion) dshProviderBridge.invalidate();
+  return result;
+});
+ipcMain.handle('runtimeProviders:list', (_event, force = false) => dshProviderBridge.getSnapshot(Boolean(force)));
+ipcMain.handle('runtimeProviders:refresh', () => dshProviderBridge.refresh());
+ipcMain.handle('runtimeProviders:getModels', (_event, provider?: string) => dshProviderBridge.getProviderModels(provider));
+ipcMain.handle('runtimeProviders:discover', (_event, input: { settingsNs: string; provider?: string; baseURL?: string; api?: string }) => dshProviderBridge.discoverRuntimeModels(input));
+ipcMain.handle('runtimeProviders:getCredentialStatus', (_event, refs: string[]) => dshProviderBridge.getCredentialStatus(refs));
+ipcMain.handle('runtimeProviders:import', (_event, providerId: string) => dshProviderBridge.importProvider(providerId));
+ipcMain.handle('runtimeProviders:bind', (_event, input: RuntimeBindingInput) => dshProviderBridge.applyEndpointBinding(input));
+ipcMain.handle('runtimeProviders:unbind', (_event, bindingId: string) => dshProviderBridge.removeBinding(bindingId));
+ipcMain.handle('runtimeProviders:setCredential', (_event, ref: string, value: string) => dshProviderBridge.setCredential(ref, value));
+ipcMain.handle('updates:getStatus', () => getUpdateStatus());
+ipcMain.handle('updates:check', () => checkForUpdates());
+ipcMain.handle('updates:updateRuntime', async () => {
+  const result = await runtimeUpdateExecutor.executeRuntimeUpdate();
+  dshProviderBridge.invalidate();
+  return result;
+});
+ipcMain.handle('updates:getHistory', () => runtimeUpdateExecutor.getHistory());
+ipcMain.handle('updates:getProgress', () => runtimeUpdateExecutor.getProgress());
 
 ipcMain.handle('core:overview', () => getCoreOverview());
 ipcMain.handle('workspace:create', (_event, input: WorkspaceCreateInput) => createWorkspace(input));
 ipcMain.handle('workspace:list', () => listWorkspaces());
 ipcMain.handle('workspace:get', (_event, id: string) => getWorkspace(id));
 ipcMain.handle('workspace:deleteMetadata', (_event, id: string) => deleteWorkspaceMetadata(id));
+ipcMain.handle('workspace:bind', (_event, id: string, input: WorkspaceBindingInput) => bindWorkspace(id, input));
 ipcMain.handle('task:create', (_event, input: TaskCreateInput) => createTask(input));
 ipcMain.handle('task:list', (_event, workspaceId?: string) => listTasks(workspaceId));
 ipcMain.handle('task:get', (_event, id: string) => getTask(id));
@@ -536,6 +628,11 @@ ipcMain.handle('shell:saveControlCenterWidth', (_event, width: number) => (
 let lastProjectedRuntimeStatus: string | null = null;
 
 onDshStatusChanged((info) => {
+  try {
+    syncDeepSeekHarnessRuntime(info);
+  } catch (error) {
+    console.warn(`RookieDSH: failed to update Runtime registry (${String(error)}).`);
+  }
   recordRuntimeStatus(info);
   if (lastProjectedRuntimeStatus !== info.status) {
     lastProjectedRuntimeStatus = info.status;
@@ -567,6 +664,12 @@ onDshStatusChanged((info) => {
 function bootstrap(): void {
   const config = getConfig();
   const win = createMainWindow(config);
+  try {
+    syncDeepSeekHarnessRuntime(getRuntimeStatus());
+  } catch (error) {
+    console.warn(`RookieDSH: failed to initialize Runtime registry (${String(error)}).`);
+  }
+  void checkDeepSeekHarnessVersion();
   if (!config.runtime.autoStart) return;
 
   void startRuntime().then(() => {

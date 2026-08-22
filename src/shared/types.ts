@@ -1,6 +1,24 @@
 // Shared types between main, preload and renderer.
 
-import type { Language, RookieDshConfig } from './configTypes';
+import type { Language, RookieDshConfig, UpdateConfig } from './configTypes';
+import type { ModelEndpoint, ModelEndpointInput } from './modelTypes';
+import type {
+  DshCapabilitySet,
+  DshCredentialStatus,
+  DshProvider,
+  DshProviderModelGroup,
+  DshProviderSnapshot,
+  RuntimeBindingInput,
+  RuntimeModelBinding,
+} from './runtimeBindingTypes';
+import type { RuntimeInstance, RuntimeVersionInfo } from './runtimeRegistryTypes';
+import type {
+  RuntimeUpdateProgress,
+  RuntimeUpdateResult,
+  SoftwareVersion,
+  UpdateHistory,
+  UpdateStatus,
+} from './updateTypes';
 import type {
   CoreEvent,
   CoreOverview,
@@ -11,8 +29,19 @@ import type {
   TaskStatus,
   TaskStatusUpdateInput,
   Workspace,
+  WorkspaceBindingInput,
   WorkspaceCreateInput,
 } from './coreTypes';
+
+export type {
+  DshCapabilitySet,
+  DshCredentialStatus,
+  DshProvider,
+  DshProviderModelGroup,
+  DshProviderSnapshot,
+  RuntimeBindingInput,
+  RuntimeModelBinding,
+};
 
 export type {
   CoreEvent,
@@ -24,13 +53,28 @@ export type {
   TaskStatus,
   TaskStatusUpdateInput,
   Workspace,
+  WorkspaceBindingInput,
   WorkspaceCreateInput,
+};
+export type {
+  ModelEndpoint,
+  ModelEndpointInput,
+  RuntimeInstance,
+  RuntimeVersionInfo,
+  RuntimeUpdateProgress,
+  RuntimeUpdateResult,
+  SoftwareVersion,
+  UpdateConfig,
+  UpdateHistory,
+  UpdateStatus,
 };
 
 export type RuntimeStatus = 'STOPPED' | 'STARTING' | 'RUNNING' | 'STOPPING' | 'FAILED';
+export type RuntimeReadiness = 'NOT_STARTED' | 'PROCESS_RUNNING' | 'PORT_READY' | 'WEB_READY' | 'PAGE_READY';
 
 export interface RuntimeInfo {
   status: RuntimeStatus;
+  readiness: RuntimeReadiness;
   pid: number | null;
   url: string | null;
   error: string | null;
@@ -80,6 +124,7 @@ export interface RookieDshApi {
   config: {
     get(): Promise<RookieDshConfig>;
     setLanguage(language: Language): Promise<Language>;
+    setUpdatePreferences(config: UpdateConfig): Promise<UpdateConfig>;
   };
   runtime: {
     start(): Promise<void>;
@@ -87,6 +132,7 @@ export interface RookieDshApi {
     getStatus(): Promise<RuntimeInfo>;
     getLogs(): Promise<RuntimeLogEntry[]>;
     getDiagnostics(): Promise<RuntimeDiagnostics>;
+    getCapabilities(): Promise<DshCapabilitySet>;
     onStatusChanged(listener: (info: RuntimeInfo) => void): () => void;
   };
   core: {
@@ -96,6 +142,7 @@ export interface RookieDshApi {
       list(): Promise<Workspace[]>;
       get(id: string): Promise<Workspace | null>;
       deleteMetadata(id: string): Promise<boolean>;
+      bind(id: string, input: WorkspaceBindingInput): Promise<Workspace>;
     };
     tasks: {
       create(input: TaskCreateInput): Promise<Task>;
@@ -111,6 +158,36 @@ export interface RookieDshApi {
     events: {
       list(limit?: number): Promise<CoreEvent[]>;
     };
+  };
+  models: {
+    list(): Promise<ModelEndpoint[]>;
+    add(input: ModelEndpointInput): Promise<ModelEndpoint>;
+    remove(id: string): Promise<boolean>;
+    check(id: string): Promise<ModelEndpoint>;
+    discover(id: string): Promise<ModelEndpoint>;
+  };
+  runtimeProviders: {
+    list(force?: boolean): Promise<DshProviderSnapshot>;
+    refresh(): Promise<DshProviderSnapshot>;
+    getModels(provider?: string): Promise<DshProviderModelGroup[]>;
+    discover(input: { settingsNs: string; provider?: string; baseURL?: string; api?: string }): Promise<Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number }>>;
+    getCredentialStatus(refs: string[]): Promise<Record<string, DshCredentialStatus>>;
+    import(providerId: string): Promise<ModelEndpoint>;
+    bind(input: RuntimeBindingInput): Promise<RuntimeModelBinding>;
+    unbind(bindingId: string): Promise<boolean>;
+    setCredential(ref: string, value: string): Promise<DshCredentialStatus>;
+  };
+  runtimes: {
+    list(): Promise<RuntimeInstance[]>;
+    checkVersion(): Promise<RuntimeVersionInfo>;
+  };
+  updates: {
+    getStatus(): Promise<UpdateStatus>;
+    check(): Promise<UpdateStatus>;
+    updateRuntime(): Promise<RuntimeUpdateResult>;
+    getHistory(): Promise<UpdateHistory[]>;
+    getProgress(): Promise<RuntimeUpdateProgress>;
+    onProgressChanged(listener: (progress: RuntimeUpdateProgress) => void): () => void;
   };
   shell: {
     setPage(page: ShellPage): void;

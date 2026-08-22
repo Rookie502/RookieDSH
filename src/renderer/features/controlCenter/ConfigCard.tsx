@@ -19,6 +19,8 @@ export default function ConfigCard({ config }: { config: RookieDshConfig | null 
           <ConfigValue label={t('configuration.command')} value={config.runtime.command} />
           <ConfigValue label={t('configuration.port')} value={String(config.runtime.port)} />
           <ConfigValue label={t('configuration.autoStart')} value={String(config.runtime.autoStart)} />
+          <ConfigValue label={t('configuration.startTimeout')} value={`${config.runtime.startTimeout / 1000}s`} />
+          <ConfigValue label={t('configuration.updateRestartTimeout')} value={`${config.runtime.updateRestartTimeout / 1000}s`} />
           <ConfigValue label={t('configuration.controlCenterWidth')} value={`${config.controlCenter.width}px`} />
         </div>
       )}

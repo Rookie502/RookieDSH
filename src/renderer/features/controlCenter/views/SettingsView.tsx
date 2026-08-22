@@ -1,12 +1,13 @@
-import type { RookieDshConfig, Language } from '@shared/configTypes';
+import type { Language, RookieDshConfig, UpdateConfig } from '@shared/configTypes';
 import { t } from '../../../i18n';
 
 interface SettingsViewProps {
   config: RookieDshConfig | null;
   language: Language;
+  onUpdatePreferences: (updates: UpdateConfig) => void;
 }
 
-export default function SettingsView({ config, language }: SettingsViewProps) {
+export default function SettingsView({ config, language, onUpdatePreferences }: SettingsViewProps) {
   return (
     <div className="control-center-view-stack">
       <article className="control-card settings-card">
@@ -24,9 +25,38 @@ export default function SettingsView({ config, language }: SettingsViewProps) {
             <ConfigValue label={t('settings.controlCenterWidth')} value={`${config.controlCenter.width}px`} />
             <ConfigValue label={t('settings.runtimeAutoStart')} value={String(config.runtime.autoStart)} />
             <ConfigValue label={t('settings.runtimeCommand')} value={config.runtime.command} />
+            <ConfigValue label={t('settings.startTimeout')} value={`${config.runtime.startTimeout / 1000}s`} />
+            <ConfigValue label={t('settings.updateRestartTimeout')} value={`${config.runtime.updateRestartTimeout / 1000}s`} />
           </div>
         )}
       </article>
+      {config && (
+        <article className="control-card settings-card">
+          <div className="card-kicker">{t('settings.updatePreferences')}</div>
+          <h2>{t('settings.updatePreferences')}</h2>
+          <div className="config-list">
+            <label className="config-input-row">
+              <span>{t('settings.autoCheck')}</span>
+              <input
+                type="checkbox"
+                checked={config.updates.autoCheck}
+                onChange={(event) => onUpdatePreferences({ ...config.updates, autoCheck: event.target.checked })}
+              />
+            </label>
+            <label className="config-input-row">
+              <span>{t('settings.checkFrequency')}</span>
+              <select
+                value={config.updates.checkFrequency}
+                onChange={(event) => onUpdatePreferences({ ...config.updates, checkFrequency: event.target.value as UpdateConfig['checkFrequency'] })}
+              >
+                <option value="daily">daily</option>
+                <option value="weekly">weekly</option>
+                <option value="manual">manual</option>
+              </select>
+            </label>
+          </div>
+        </article>
+      )}
     </div>
   );
 }

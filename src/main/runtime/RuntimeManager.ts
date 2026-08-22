@@ -11,7 +11,15 @@ export {
   detectDsh,
   getDshLogs as getRuntimeLogs,
   getDshState as getRuntimeStatus,
+  markDshPageReady as markRuntimePageReady,
   onDshStatusChanged,
-  startDsh as startRuntime,
   stopDsh as stopRuntime,
 } from './dshProcess';
+
+import { startDsh, type RuntimeStartOptions } from './dshProcess';
+
+export function startRuntime(options?: RuntimeStartOptions): Promise<void> {
+  return startDsh(options);
+}
+
+export type { RuntimeStartOptions };

@@ -7,9 +7,11 @@ import {
   CONTROL_CENTER_WIDTH_MIN,
   type Language,
   type RookieDshConfig,
+  type UpdateCheckFrequency,
 } from '@shared/configTypes';
 
 const CONFIG_FILE_NAME = 'config.json';
+const LEGACY_DEFAULT_STARTUP_TIMEOUT = 15_000;
 
 export const DEFAULT_CONFIG: RookieDshConfig = {
   language: 'en-US',
@@ -18,7 +20,9 @@ export const DEFAULT_CONFIG: RookieDshConfig = {
     fallbackCommand: 'npx',
     port: 3080,
     autoStart: true,
-    startupTimeout: 15_000,
+    startTimeout: 45_000,
+    startupTimeout: 45_000,
+    updateRestartTimeout: 120_000,
     shutdownTimeout: 5_000,
     maxLogEntries: 300,
     maxLogMessageLength: 8_000,
@@ -36,6 +40,10 @@ export const DEFAULT_CONFIG: RookieDshConfig = {
   harness: {
     url: 'http://localhost:3080',
   },
+  updates: {
+    autoCheck: true,
+    checkFrequency: 'daily',
+  },
 };
 
 let cachedConfig: RookieDshConfig | null = null;
@@ -48,6 +56,7 @@ function cloneConfig(config: RookieDshConfig): RookieDshConfig {
     floating: { ...config.floating },
     controlCenter: { ...config.controlCenter },
     harness: { ...config.harness },
+    updates: { ...config.updates },
   };
 }
 
@@ -81,6 +90,10 @@ function languageValue(value: unknown, fallback: Language): Language {
   return value === 'zh-CN' || value === 'en-US' ? value : fallback;
 }
 
+function updateFrequencyValue(value: unknown, fallback: UpdateCheckFrequency): UpdateCheckFrequency {
+  return value === 'daily' || value === 'weekly' || value === 'manual' ? value : fallback;
+}
+
 function integerValue(value: unknown, fallback: number, minimum: number): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= minimum ? value : fallback;
 }
@@ -111,7 +124,13 @@ function normalizeConfig(value: unknown): RookieDshConfig {
   const floating = isRecord(root.floating) ? root.floating : {};
   const controlCenter = isRecord(root.controlCenter) ? root.controlCenter : {};
   const harness = isRecord(root.harness) ? root.harness : {};
+  const updates = isRecord(root.updates) ? root.updates : {};
   const defaultLanguage = getSystemLanguage();
+  const legacyOrCurrentStartTimeout = runtime.startTimeout ?? runtime.startupTimeout;
+  const startTimeoutValue = runtime.startTimeout === undefined
+    && legacyOrCurrentStartTimeout === LEGACY_DEFAULT_STARTUP_TIMEOUT
+    ? DEFAULT_CONFIG.runtime.startTimeout
+    : legacyOrCurrentStartTimeout;
 
   return {
     language: languageValue(root.language, defaultLanguage),
@@ -120,7 +139,17 @@ function normalizeConfig(value: unknown): RookieDshConfig {
       fallbackCommand: stringValue(runtime.fallbackCommand, DEFAULT_CONFIG.runtime.fallbackCommand),
       port: integerValue(runtime.port, DEFAULT_CONFIG.runtime.port, 1),
       autoStart: typeof runtime.autoStart === 'boolean' ? runtime.autoStart : DEFAULT_CONFIG.runtime.autoStart,
-      startupTimeout: integerValue(runtime.startupTimeout, DEFAULT_CONFIG.runtime.startupTimeout, 1_000),
+      startTimeout: integerValue(
+        startTimeoutValue,
+        DEFAULT_CONFIG.runtime.startTimeout,
+        1_000,
+      ),
+      startupTimeout: integerValue(
+        startTimeoutValue,
+        DEFAULT_CONFIG.runtime.startupTimeout,
+        1_000,
+      ),
+      updateRestartTimeout: integerValue(runtime.updateRestartTimeout, DEFAULT_CONFIG.runtime.updateRestartTimeout, 1_000),
       shutdownTimeout: integerValue(runtime.shutdownTimeout, DEFAULT_CONFIG.runtime.shutdownTimeout, 1_000),
       maxLogEntries: integerValue(runtime.maxLogEntries, DEFAULT_CONFIG.runtime.maxLogEntries, 1),
       maxLogMessageLength: integerValue(runtime.maxLogMessageLength, DEFAULT_CONFIG.runtime.maxLogMessageLength, 100),
@@ -142,6 +171,10 @@ function normalizeConfig(value: unknown): RookieDshConfig {
     },
     harness: {
       url: urlValue(harness.url, DEFAULT_CONFIG.harness.url),
+    },
+    updates: {
+      autoCheck: typeof updates.autoCheck === 'boolean' ? updates.autoCheck : DEFAULT_CONFIG.updates.autoCheck,
+      checkFrequency: updateFrequencyValue(updates.checkFrequency, DEFAULT_CONFIG.updates.checkFrequency),
     },
   };
 }

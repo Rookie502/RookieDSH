@@ -7,6 +7,8 @@ export interface Workspace {
   createdAt: string;
   updatedAt: string;
   metadata: CoreMetadata;
+  runtimeId?: string | null;
+  modelEndpointId?: string | null;
 }
 
 export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
@@ -58,6 +60,11 @@ export interface WorkspaceCreateInput {
   name: string;
   path: string;
   metadata?: CoreMetadata;
+}
+
+export interface WorkspaceBindingInput {
+  runtimeId?: string | null;
+  modelEndpointId?: string | null;
 }
 
 export interface TaskCreateInput {
